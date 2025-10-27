@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>阿尔巴尼亚派件数据面板 · 单文件版</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --card:#0f1722; --ink:#e6edf3; --muted:#94a3b8; --accent:#22d3ee; --accent2:#a78bfa; --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+      --ring: 0 0 0 1px rgba(255,255,255,.06), 0 10px 30px rgba(0,0,0,.45);
+    }
+    html,body{height:100%; background:radial-gradient(1200px 600px at 10% -10%,#12223300 0,#12223340 60%,transparent 100%),
+                                   radial-gradient(1200px 600px at 110% 10%,#1b103700 0,#1b103740 50%,transparent 100%),
+                                   var(--bg);
+               color:var(--ink); font:clamp(14px,2.5vw,16px)/1.55 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+    .wrap{max-width:1200px;margin:20px auto;padding:12px 16px 56px;}
+    header{display:flex;align-items:center;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+    .logo{width:40px;height:40px;border-radius:12px;background:
+      conic-gradient(from 200deg, #0ea5e9, #22d3ee, #a78bfa, #22d3ee 75%, #0ea5e9);
+      filter:saturate(1.2); box-shadow:var(--ring)}
+    h1{font-size:clamp(18px,3.2vw,22px);margin:0 0 2px;font-weight:800;letter-spacing:.2px}
+    .sub{color:var(--muted);font-size:12.5px}
+
+    .uploader{margin:14px 0; padding:14px; border:1px dashed #334155; border-radius:14px; background:linear-gradient(180deg, #0f1722cc, #0b111acc);
+      display:grid;grid-template-columns:1fr auto; gap:12px; align-items:center}
+    .uploader.drag{border-color:#22d3ee88; box-shadow:0 0 0 3px #22d3ee22 inset}
+    .uploader .hint{font-size:12.5px;color:var(--muted)}
+    .btn{appearance:none;border:0;border-radius:12px;padding:10px 14px;background:#152235;color:#e6edf3;cursor:pointer;font-weight:700}
+    .btn:hover{background:#1a2941}
+    .btn.primary{background:linear-gradient(90deg,#22d3ee,#a78bfa); color:#00111a}
+    .btn.primary:hover{filter:brightness(1.08)}
+
+    .grid{display:grid;gap:12px;grid-template-columns:repeat(4,1fr);margin-top:14px}
+    @media (max-width:1024px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media (max-width:560px){.grid{grid-template-columns:1fr}}
+
+    .card{border-radius:16px;background:linear-gradient(180deg,#101827,#0b111a);padding:14px;box-shadow:var(--ring)}
+    .kpi .label{color:var(--muted);font-size:12px}
+    .kpi .num{font-size:clamp(22px,5vw,28px);font-weight:900;margin-top:6px}
+
+    .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
+
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:9px 10px;border-bottom:1px solid #1f2b3e}
+    th{color:#9fb1c7;text-align:left;font-weight:700;position:sticky;top:0;background:#0f1722}
+    tbody tr:hover{background:#0c1420}
+
+    /* 甜甜圈图：SVG + 悬浮提示 */
+    .donut-wrap{position:relative;display:grid;place-items:center}
+    #donut_svg{width:min(72vw,320px);height:min(72vw,320px)}
+    .donut-center{pointer-events:none;}
+    .tooltip{position:absolute;padding:8px 10px;border-radius:10px;background:#0b1422;border:1px solid #1f2b3e;box-shadow:var(--ring);
+             color:var(--ink);font-size:12px;transform:translate(-50%,-120%);white-space:nowrap;opacity:0;transition:.12s}
+    .tooltip.show{opacity:1}
+
+    details{margin-top:12px}
+    summary{cursor:pointer;color:#a6b4c5}
+    .tags{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+    .tag{font-size:11px;color:#9fb1c7;background:#0e1a29;border:1px solid #1d2a3b;padding:4px 8px;border-radius:999px}
+
+    .footer{margin-top:24px;color:#76879b;font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo"></div>
+      <div>
+        <h1>阿尔巴尼亚派件数据面板（单文件 · 本地解析）</h1>
+        <div class="sub">上传 Excel（.xlsx），本地浏览器直接计算，不出网。口径：仅统计「有快递单号」；问题件仅看「问题件类型名称 / 异常件类型名称」。</div>
+      </div>
+    </header>
+
+    <div id="uploader" class="uploader">
+      <div>
+        <div style="font-weight:800;font-size:14px">把文件拖进来，或点击右侧按钮选择文件</div>
+        <div class="hint">自动选取数据最多的工作表，输出：总票数（有单号）/ 已签收 / 问题件（派送中+网点到件）/ 正常派送中（无问题标记）。</div>
+      </div>
+      <div>
+        <input id="file" type="file" accept=".xlsx,.xls" style="display:none" />
+        <button class="btn primary" onclick="document.getElementById('file').click()">选择 Excel</button>
+      </div>
+    </div>
+
+    <section id="kpis" class="grid" style="display:none">
+      <div class="card kpi"><div class="label">总票数（仅统计有快递单号）</div><div id="k_total" class="num">-</div></div>
+      <div class="card kpi"><div class="label">已签收</div><div id="k_signed" class="num">-</div></div>
+      <div class="card kpi"><div class="label">问题件（派送/网点到件）</div><div id="k_problem" class="num">-</div></div>
+      <div class="card kpi"><div class="label">正常派送中（无问题标记）</div><div id="k_normal" class="num">-</div></div>
+    </section>
+
+    <div class="split" id="analytics" style="display:none">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px">问题类型占比（派送中 + 网点到件）</h3>
+          <button class="btn" id="btn_export">导出汇总.xlsx</button>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(220px,360px) 1fr;gap:10px;align-items:center;margin-top:8px">
+          <div class="donut-wrap">
+            <svg id="donut_svg" viewBox="0 0 220 220" aria-label="Issue donut"></svg>
+            <div id="tooltip" class="tooltip"></div>
+          </div>
+          <div style="min-width:240px;overflow:auto">
+            <table>
+              <thead><tr><th>问题类型</th><th style="width:120px">数量</th><th style="width:120px">占比</th></tr></thead>
+              <tbody id="issue_tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <details id="audit" style="display:none">
+      <summary>审计与识别说明</summary>
+      <div class="card" style="margin-top:10px">
+        <div class="tags" id="tags"></div>
+        <div class="muted" style="margin-top:8px">* 识别到的列名用于自动适配不同模板；如识别有误，可在 Excel 里把列名改为常用命名后再导入。</div>
+      </div>
+    </details>
+
+    <div class="footer">本页面完全在你的浏览器本地运行 · © 数据逻辑：有单号才计入；问题件=仅看问题件/异常件类型；状态口径：签收 / 派送中&网点到件。</div>
+  </div>
+
+  <!-- SheetJS (xlsx) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" onerror="alert('提示：离线环境请将 xlsx.full.min.js 代码内联至此文件。');"></script>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const $$ = sel => Array.from(document.querySelectorAll(sel));
+
+    // —— 关键词配置 ——
+    const ID_KEYS = ["单号","订单号","运单","Waybill","AWB","Tracking","快递单号","跟踪","运单号","条码","包裹号"];
+    const STATUS_KEYS = ["最新状态","订单状态","状态","当前状态","物流状态"];
+    const PROB1_KEYS = ["问题件类型","问题件类型名称"]; // 只看这两类
+    const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
+
+    const SIGNED_PAT = /(签收|已签收|成功签收|Delivered)/i;
+    const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
+
+    const ph = s => (s==null?"":String(s).trim());
+    const isValidId = v => !!(v && /[A-Za-z0-9]/.test(v) && String(v).length >= 6);
+
+    const pickCol = (cols, keys) => cols.find(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
+    const pickColsAny = (cols, keys) => cols.filter(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
+
+    function sheetToJSONPickBiggest(wb){
+      let maxLen=0, pick=null, data=null;
+      wb.SheetNames.forEach(name=>{
+        const ws=wb.Sheets[name];
+        const arr=XLSX.utils.sheet_to_json(ws,{defval:"",raw:false});
+        if(arr.length>maxLen){maxLen=arr.length; pick=name; data=arr}
+      });
+      return {name:pick, rows:data||[]};
+    }
+
+    function compute(rows){
+      if(!rows.length) throw new Error('表格为空');
+      const cols = Object.keys(rows[0]);
+
+      // 识别列
+      const idCols = pickColsAny(cols, ID_KEYS);
+      const statusCol = pickCol(cols, STATUS_KEYS);
+      const prob1Col = pickCol(cols, PROB1_KEYS);
+      const prob2Col = pickCol(cols, PROB2_KEYS);
+
+      // 仅统计有快递单号
+      const scoped = rows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
+
+      // 状态拆分
+      const signed = scoped.filter(r => statusCol && SIGNED_PAT.test(ph(r[statusCol])));
+      const deliverSet = scoped.filter(r => statusCol && DELIVERY_PAT.test(ph(r[statusCol])));
+
+      // 问题标记（只看两列）
+      const probFlag = r => !!( (prob1Col && ph(r[prob1Col])) || (prob2Col && ph(r[prob2Col])) );
+      const problems = deliverSet.filter(probFlag);
+      const normalDeliv = deliverSet.filter(r => !probFlag(r));
+
+      // 问题类型占比（派送+网点到件）
+      const mergeIssue = r => ph(r[prob1Col]) || ph(r[prob2Col]) || '未标注';
+      const issueMap = new Map();
+      problems.forEach(r=>{
+        const key = mergeIssue(r);
+        issueMap.set(key, (issueMap.get(key)||0)+1);
+      });
+      const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v}));
+
+      return {
+        cols, idCols, statusCol, prob1Col, prob2Col,
+        total: scoped.length,
+        signed: signed.length,
+        problem: problems.length,
+        normal: normalDeliv.length,
+        issues: issueList,
+        issueBase: problems.length,
+      };
+    }
+
+    function render(res){
+      $('#kpis').style.display='grid';
+      $('#analytics').style.display='grid';
+      $('#audit').style.display='block';
+
+      $('#k_total').textContent = res.total;
+      $('#k_signed').textContent = res.signed;
+      $('#k_problem').textContent = res.problem;
+      $('#k_normal').textContent = res.normal;
+
+      // 表格渲染 + 行交互
+      const tb = $('#issue_tbody'); tb.innerHTML='';
+      if(res.issues.length===0){
+        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0%</td></tr>';
+      } else {
+        res.issues.forEach(({type,count},i)=>{
+          const pct = res.issueBase? ((count/res.issueBase*100).toFixed(2)+'%'):'-';
+          const tr = document.createElement('tr');
+          tr.dataset.idx = i;
+          tr.innerHTML = `<td>${escapeHtml(type)}</td><td>${count}</td><td>${pct}</td>`;
+          tr.addEventListener('mouseenter',()=>setActive(i));
+          tr.addEventListener('mouseleave',()=>setActive(-1));
+          tb.appendChild(tr);
+        });
+      }
+
+      // 甜甜圈渲染 + 悬浮交互
+      drawDonutSVG(res.issues.map(x=>x.count), res.issues.map(x=>x.type), res.issueBase);
+
+      // 审计标签
+      const tg = $('#tags');
+      tg.innerHTML = '';
+      const pushTag = (k,v)=>{ const s=document.createElement('span'); s.className='tag'; s.textContent=`${k}: ${v||'未识别'}`; tg.appendChild(s); };
+      pushTag('ID列', res.idCols.join(', ')||'未识别');
+      pushTag('状态列', res.statusCol||'未识别');
+      pushTag('问题件类型列', res.prob1Col||'未识别');
+      pushTag('异常件类型列', res.prob2Col||'未识别');
+
+      $('#btn_export').onclick = () => exportWorkbook(res);
+    }
+
+    // —— 可交互甜甜圈（SVG） ——
+    const palette = ['#22d3ee','#a78bfa','#22c55e','#f59e0b','#ef4444','#38bdf8','#f472b6','#84cc16','#eab308','#f97316'];
+    let SEGMENTS = [];
+    function polar(cx, cy, r, ang){ const a = (ang-90)*Math.PI/180; return [cx + r*Math.cos(a), cy + r*Math.sin(a)]; }
+    function arcPath(cx, cy, r1, r2, a0, a1){
+      const [x0,y0] = polar(cx,cy,r1,a0), [x1,y1] = polar(cx,cy,r1,a1);
+      const [x2,y2] = polar(cx,cy,r2,a1), [x3,y3] = polar(cx,cy,r2,a0);
+      const large = (a1-a0) > 180 ? 1 : 0;
+      return `M ${x0} ${y0} A ${r1} ${r1} 0 ${large} 1 ${x1} ${y1} L ${x2} ${y2} A ${r2} ${r2} 0 ${large} 0 ${x3} ${y3} Z`;
+    }
+    function drawDonutSVG(series, labels, base){
+      const svg = $('#donut_svg'); svg.innerHTML=''; SEGMENTS = [];
+      const cx=110, cy=110, rOuter=100, rInner=62; let acc=0; const sum=series.reduce((a,b)=>a+b,0);
+      if(sum<=0){
+        // 空态画环
+        const ring = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        ring.setAttribute('cx',cx); ring.setAttribute('cy',cy); ring.setAttribute('r',rOuter);
+        ring.setAttribute('fill','#334155'); svg.appendChild(ring);
+      } else {
+        series.forEach((v,i)=>{
+          const a0=acc/sum*360, a1=(acc+v)/sum*360; acc+=v;
+          const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+          path.setAttribute('d', arcPath(cx,cy,rOuter,rInner,a0,a1));
+          path.setAttribute('fill', palette[i%palette.length]);
+          path.style.transition='transform .12s, filter .12s, opacity .12s';
+          path.dataset.idx=i;
+          path.addEventListener('mouseenter', e=>{ setActive(i, e); });
+          path.addEventListener('mouseleave', ()=>{ setActive(-1); });
+          svg.appendChild(path);
+          SEGMENTS[i]=path;
+        });
+      }
+      // 中心盖板
+      const hole = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      hole.setAttribute('cx',cx); hole.setAttribute('cy',cy); hole.setAttribute('r',rInner-1);
+      hole.setAttribute('fill', getComputedStyle(document.body).getPropertyValue('--card').trim());
+      hole.setAttribute('class','donut-center');
+      svg.appendChild(hole);
+
+      const text1 = document.createElementNS('http://www.w3.org/2000/svg','text');
+      text1.setAttribute('x',cx); text1.setAttribute('y',cy-2);
+      text1.setAttribute('text-anchor','middle'); text1.setAttribute('fill','#c7d2fe');
+      text1.setAttribute('font-size','18'); text1.setAttribute('font-weight','800');
+      text1.textContent = base||0; svg.appendChild(text1);
+
+      const text2 = document.createElementNS('http://www.w3.org/2000/svg','text');
+      text2.setAttribute('x',cx); text2.setAttribute('y',cy+16);
+      text2.setAttribute('text-anchor','middle'); text2.setAttribute('fill','#94a3b8');
+      text2.setAttribute('font-size','12'); text2.textContent='样本'; svg.appendChild(text2);
+
+      // 保存标签和占比到节点上用于 tooltip
+      SEGMENTS.forEach((p,i)=>{ p.dataset.label = labels[i]||''; p.dataset.count = series[i]; p.dataset.base = base||0; });
+    }
+
+    function setActive(i, evt){
+      const tt = $('#tooltip');
+      SEGMENTS.forEach((p,idx)=>{
+        if(!p) return;
+        const on = i===idx;
+        p.style.transform = on? 'scale(1.02)' : 'scale(1)';
+        p.style.filter = on? 'brightness(1.1)' : 'none';
+        p.style.opacity = (i<0 || on)? '1' : '.65';
+      });
+      // 同步表格高亮
+      $$('#issue_tbody tr').forEach(tr=>{
+        tr.style.background = (Number(tr.dataset.idx)===i)? '#0c1420' : '';
+      });
+      // tooltip
+      if(i>=0 && SEGMENTS[i]){
+        const n=SEGMENTS[i];
+        const b=Number(n.dataset.base)||0, c=Number(n.dataset.count)||0, pct = b? (c*100/b).toFixed(2)+'%' : '0%';
+        tt.innerHTML = `<b>${escapeHtml(n.dataset.label||'')}</b> · ${c} / ${pct}`;
+        tt.classList.add('show');
+        if(evt && evt.clientX){ // 放在鼠标附近
+          const rect = tt.parentElement.getBoundingClientRect();
+          tt.style.left = (evt.clientX - rect.left) + 'px';
+          tt.style.top  = (evt.clientY - rect.top ) + 'px';
+        }
+      } else {
+        tt.classList.remove('show');
+      }
+    }
+
+    function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"'"}[c])); }
+
+    // —— 导出 Excel（本地打包） ——
+    function exportWorkbook(res){
+      const wb = XLSX.utils.book_new();
+      const sumData = [
+        ["指标","数量"],
+        ["总票数（仅统计有快递单号）", res.total],
+        ["已签收", res.signed],
+        ["问题件（派送/网点到件）", res.problem],
+        ["正常派送中（无问题标记）", res.normal]
+      ];
+      const wsSum = XLSX.utils.aoa_to_sheet(sumData);
+      XLSX.utils.book_append_sheet(wb, wsSum, '总览');
+
+      // 问题占比
+      const issueData = [["问题类型","数量","占比(%)"]];
+      const base = res.issueBase || 0;
+      res.issues.forEach(x=> issueData.push([x.type, x.count, base? +(x.count*100/base).toFixed(2): 0]));
+      const wsIssue = XLSX.utils.aoa_to_sheet(issueData);
+      XLSX.utils.book_append_sheet(wb, wsIssue, '问题类型占比');
+
+      XLSX.writeFile(wb, `阿尔巴尼亚派件日报_汇总_${ts()}.xlsx`);
+    }
+
+    function ts(){
+      const d=new Date();
+      const p=n=>String(n).padStart(2,'0');
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    }
+
+    // —— 文件上传处理 ——
+    const drop = $('#uploader');
+    function setDrag(on){ drop.classList.toggle('drag', !!on); }
+    ;['dragenter','dragover'].forEach(ev=> drop.addEventListener(ev, e=>{e.preventDefault();setDrag(true);}));
+    ;['dragleave','drop'].forEach(ev=> drop.addEventListener(ev, e=>{e.preventDefault(); if(ev==='drop') handleDrop(e); setDrag(false);}));
+    function handleDrop(e){ const f= e.dataTransfer.files?.[0]; if(f) loadFile(f); }
+
+    $('#file').addEventListener('change', e=>{ const f=e.target.files?.[0]; if(f) loadFile(f); });
+
+    function loadFile(file){
+      const reader = new FileReader();
+      reader.onload = function(e){
+        try{
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, {type:'array'});
+          const pick = sheetToJSONPickBiggest(wb);
+          const res = compute(pick.rows);
+          render(res);
+        }catch(err){
+          console.error(err);
+          alert('解析失败：请确认是标准的 .xlsx 文件，且含表头行。');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  </script>
+</body>
+</html>
