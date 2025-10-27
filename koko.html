@@ -37,6 +37,8 @@
     .card{border-radius:16px;background:linear-gradient(180deg,#101827,#0b111a);padding:14px;box-shadow:var(--ring)}
     .kpi .label{color:var(--muted);font-size:12px}
     .kpi .num{font-size:clamp(22px,5vw,28px);font-weight:900;margin-top:6px}
+    .kpi .detail{font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.4}
+    .card.danger .num{color:var(--danger)}
 
     .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
 
@@ -87,6 +89,9 @@
       <div class="card kpi"><div class="label">已签收</div><div id="k_signed" class="num">-</div></div>
       <div class="card kpi"><div class="label">问题件（派送/网点到件）</div><div id="k_problem" class="num">-</div></div>
       <div class="card kpi"><div class="label">正常派送中（无问题标记）</div><div id="k_normal" class="num">-</div></div>
+      <div class="card kpi"><div class="label">签收率</div><div id="k_signed_rate" class="num">-</div></div>
+      <div class="card kpi"><div class="label">问题件率（派送/网点到件）</div><div id="k_problem_rate" class="num">-</div></div>
+      <div class="card kpi" id="card_transfer"><div class="label">卡转时效（目的国航班到达 → 清关完成）</div><div id="k_transfer" class="num">-</div><div id="k_transfer_detail" class="detail">-</div></div>
     </section>
 
     <div class="split" id="analytics" style="display:none">
@@ -133,6 +138,8 @@
     const STATUS_KEYS = ["最新状态","订单状态","状态","当前状态","物流状态"];
     const PROB1_KEYS = ["问题件类型","问题件类型名称"]; // 只看这两类
     const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
+    const ARRIVAL_KEYS = ["目的国航班到达"];
+    const CLEAR_KEYS = ["清关完成"];
 
     const SIGNED_PAT = /(签收|已签收|成功签收|Delivered)/i;
     const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
@@ -142,6 +149,72 @@
 
     const pickCol = (cols, keys) => cols.find(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
     const pickColsAny = (cols, keys) => cols.filter(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
+
+    const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30));
+
+    function parseDateTime(v){
+      if(v instanceof Date && !Number.isNaN(v.getTime())) return v;
+      if(typeof v === 'number' && !Number.isNaN(v)){
+        return new Date(EXCEL_EPOCH.getTime() + v * 86400000);
+      }
+      const str = ph(v);
+      if(!str) return null;
+      const num = Number(str);
+      if(!Number.isNaN(num)){
+        return new Date(EXCEL_EPOCH.getTime() + num * 86400000);
+      }
+      const norm = str
+        .replace(/年|\//g, '-')
+        .replace(/月/g, '-')
+        .replace(/日/g, '')
+        .replace(/\./g, '-')
+        .replace(/T/, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const direct = new Date(norm);
+      if(!Number.isNaN(direct.getTime())) return direct;
+      const m = norm.match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})(?::(\d{1,2})(?::(\d{1,2}))?)?)?/);
+      if(m){
+        return new Date(
+          Number(m[1]),
+          Number(m[2]) - 1,
+          Number(m[3]),
+          Number(m[4] || 0),
+          Number(m[5] || 0),
+          Number(m[6] || 0)
+        );
+      }
+      return null;
+    }
+
+    const formatDate = dt => {
+      if(!dt || Number.isNaN(dt.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+    };
+
+    function formatDuration(ms){
+      if(ms == null || ms < 0) return {text:'-', daysDecimal:null};
+      const totalMinutes = Math.floor(ms / 60000);
+      const days = Math.floor(totalMinutes / (24 * 60));
+      const hours = Math.floor((totalMinutes - days * 24 * 60) / 60);
+      const minutes = totalMinutes % 60;
+      const parts = [];
+      if(days) parts.push(`${days}天`);
+      if(hours) parts.push(`${hours}小时`);
+      if(minutes || parts.length===0) parts.push(`${minutes}分钟`);
+      const daysVal = ms / 86400000;
+      return {
+        text: parts.join(' '),
+        daysDecimal: Number(daysVal.toFixed(2)),
+        daysFormatted: daysVal.toFixed(2)
+      };
+    }
+
+    function formatPercent(v){
+      if(v==null || Number.isNaN(v)) return '-';
+      return (v*100).toFixed(2) + '%';
+    }
 
     function sheetToJSONPickBiggest(wb){
       let maxLen=0, pick=null, data=null;
@@ -162,6 +235,8 @@
       const statusCol = pickCol(cols, STATUS_KEYS);
       const prob1Col = pickCol(cols, PROB1_KEYS);
       const prob2Col = pickCol(cols, PROB2_KEYS);
+      const arrivalCol = pickCol(cols, ARRIVAL_KEYS);
+      const clearCol = pickCol(cols, CLEAR_KEYS);
 
       // 仅统计有快递单号
       const scoped = rows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
@@ -184,6 +259,26 @@
       });
       const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v}));
 
+      // 卡转时效：最早时点 & 按行时效统计
+      const arrivals = [];
+      const clears = [];
+      const transferDurations = [];
+      scoped.forEach(r=>{
+        const a = arrivalCol ? parseDateTime(r[arrivalCol]) : null;
+        const c = clearCol ? parseDateTime(r[clearCol]) : null;
+        if(a && !Number.isNaN(a.getTime())) arrivals.push(a);
+        if(c && !Number.isNaN(c.getTime())) clears.push(c);
+        if(a && c && c>=a){
+          transferDurations.push((c - a) / 86400000);
+        }
+      });
+      const earliestArrival = arrivals.length ? new Date(Math.min(...arrivals.map(d=>d.getTime()))) : null;
+      const earliestClear = clears.length ? new Date(Math.min(...clears.map(d=>d.getTime()))) : null;
+      const transferMs = (earliestArrival && earliestClear && earliestClear >= earliestArrival)
+        ? (earliestClear - earliestArrival)
+        : null;
+      const over5 = transferDurations.filter(v=>v>5).length;
+
       return {
         cols, idCols, statusCol, prob1Col, prob2Col,
         total: scoped.length,
@@ -192,6 +287,19 @@
         normal: normalDeliv.length,
         issues: issueList,
         issueBase: problems.length,
+        signedRate: scoped.length ? signed.length / scoped.length : 0,
+        problemRate: deliverSet.length ? problems.length / deliverSet.length : 0,
+        deliverBase: deliverSet.length,
+        arrivalCol,
+        clearCol,
+        transfer: {
+          earliestArrival,
+          earliestClear,
+          ms: transferMs,
+          sample: transferDurations.length,
+          over5,
+          over5Rate: transferDurations.length ? over5 / transferDurations.length : 0
+        }
       };
     }
 
@@ -204,6 +312,35 @@
       $('#k_signed').textContent = res.signed;
       $('#k_problem').textContent = res.problem;
       $('#k_normal').textContent = res.normal;
+      $('#k_signed_rate').textContent = formatPercent(res.signedRate);
+      $('#k_problem_rate').textContent = res.deliverBase ? formatPercent(res.problemRate) : '-';
+
+      const cardTransfer = $('#card_transfer');
+      const numTransfer = $('#k_transfer');
+      const detailTransfer = $('#k_transfer_detail');
+      cardTransfer.classList.remove('danger');
+      numTransfer.textContent = '-';
+      detailTransfer.textContent = '-';
+      if(res.transfer && res.transfer.ms != null){
+        const {text, daysDecimal, daysFormatted} = formatDuration(res.transfer.ms);
+        numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
+        if(res.transfer.earliestArrival && res.transfer.earliestClear){
+          detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(res.transfer.earliestArrival)} 至 ${formatDate(res.transfer.earliestClear)}`;
+        } else {
+          detailTransfer.textContent = '缺少时间数据';
+        }
+        if(daysDecimal != null && daysDecimal > 5){
+          cardTransfer.classList.add('danger');
+        }
+        const sample = res.transfer.sample;
+        const over5 = res.transfer.over5;
+        const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
+        cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
+      } else {
+        numTransfer.textContent = '-';
+        detailTransfer.textContent = res.arrivalCol && res.clearCol ? '暂无可用的最早时间' : '缺少相关列';
+        cardTransfer.title = '样本量：0；>5 天：0（0.0%）';
+      }
 
       // 表格渲染 + 行交互
       const tb = $('#issue_tbody'); tb.innerHTML='';
@@ -232,6 +369,8 @@
       pushTag('状态列', res.statusCol||'未识别');
       pushTag('问题件类型列', res.prob1Col||'未识别');
       pushTag('异常件类型列', res.prob2Col||'未识别');
+      pushTag('目的国航班到达列', res.arrivalCol||'未识别');
+      pushTag('清关完成列', res.clearCol||'未识别');
 
       $('#btn_export').onclick = () => exportWorkbook(res);
     }
@@ -329,7 +468,10 @@
         ["总票数（仅统计有快递单号）", res.total],
         ["已签收", res.signed],
         ["问题件（派送/网点到件）", res.problem],
-        ["正常派送中（无问题标记）", res.normal]
+        ["正常派送中（无问题标记）", res.normal],
+        ["签收率", res.total ? (res.signedRate*100).toFixed(2)+'%' : '-'],
+        ["问题件率（派送/网点到件）", res.deliverBase ? (res.problemRate*100).toFixed(2)+'%' : '-'],
+        ["卡转时效（最早段，小数天）", res.transfer && res.transfer.ms != null ? (res.transfer.ms/86400000).toFixed(2) : '-']
       ];
       const wsSum = XLSX.utils.aoa_to_sheet(sumData);
       XLSX.utils.book_append_sheet(wb, wsSum, '总览');
