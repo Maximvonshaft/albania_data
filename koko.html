@@ -37,6 +37,7 @@
     .card{border-radius:16px;background:linear-gradient(180deg,#101827,#0b111a);padding:14px;box-shadow:var(--ring)}
     .kpi .label{color:var(--muted);font-size:12px}
     .kpi .num{font-size:clamp(22px,5vw,28px);font-weight:900;margin-top:6px}
+    .card.kpi.danger .num{color:var(--danger)}
 
     .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
 
@@ -87,6 +88,7 @@
       <div class="card kpi"><div class="label">已签收</div><div id="k_signed" class="num">-</div></div>
       <div class="card kpi"><div class="label">问题件（派送/网点到件）</div><div id="k_problem" class="num">-</div></div>
       <div class="card kpi"><div class="label">正常派送中（无问题标记）</div><div id="k_normal" class="num">-</div></div>
+      <div class="card kpi" id="k_timely_card"><div class="label">卡转时效（中位数）</div><div class="num" id="k_timely">-</div></div>
     </section>
 
     <div class="split" id="analytics" style="display:none">
@@ -133,6 +135,8 @@
     const STATUS_KEYS = ["最新状态","订单状态","状态","当前状态","物流状态"];
     const PROB1_KEYS = ["问题件类型","问题件类型名称"]; // 只看这两类
     const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
+    const ARRIVE_KEYS = ["目的国航班到达", "目的国航班到达时间"];
+    const CLEAR_KEYS = ["清关完成", "清关完成时间", "清关完成节点"];
 
     const SIGNED_PAT = /(签收|已签收|成功签收|Delivered)/i;
     const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
@@ -153,6 +157,78 @@
       return {name:pick, rows:data||[]};
     }
 
+    const DATE_RE = /\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:[日号])?(?:\s*[Tt]?\s*\d{1,2}:\d{2}(?::\d{2})?)?/g;
+
+    function normalizeDateString(str){
+      return String(str)
+        .replace(/[年月]/g,'-')
+        .replace(/[日号]/g,'')
+        .replace(/[\.]/g,'-')
+        .replace(/T/,' ')
+        .replace(/\s+/g,' ')
+        .trim();
+    }
+
+    function parseDateToTs(str){
+      if(!str) return null;
+      const normalized = normalizeDateString(str);
+      if(!normalized) return null;
+      let d = new Date(normalized);
+      if(!isNaN(d)) return d.getTime();
+      d = new Date(normalized.replace(/-/g,'/'));
+      if(!isNaN(d)) return d.getTime();
+      return null;
+    }
+
+    function earliestTimestampFromValue(value){
+      const str = ph(value);
+      if(!str) return null;
+      let earliest = null;
+      const matches = str.match(DATE_RE) || [];
+      matches.forEach(token => {
+        const ts = parseDateToTs(token);
+        if(ts!=null && (earliest==null || ts<earliest)) earliest = ts;
+      });
+      if(earliest!=null) return earliest;
+      return parseDateToTs(str);
+    }
+
+    function earliestTimestampFromCols(row, cols){
+      let earliest = null;
+      cols.forEach(col=>{
+        const ts = earliestTimestampFromValue(row[col]);
+        if(ts!=null && (earliest==null || ts<earliest)) earliest = ts;
+      });
+      return earliest;
+    }
+
+    function computeTransferStats(rows, arriveCols, clearCols){
+      const result = {median:null, samples:0, over5:0};
+      if(!arriveCols.length || !clearCols.length) return result;
+      const durations = [];
+      rows.forEach(r=>{
+        const arriveTs = earliestTimestampFromCols(r, arriveCols);
+        const clearTs = earliestTimestampFromCols(r, clearCols);
+        if(arriveTs==null || clearTs==null) return;
+        if(clearTs < arriveTs) return;
+        const diff = (clearTs - arriveTs) / (24*60*60*1000);
+        if(isFinite(diff) && diff>=0) durations.push(diff);
+      });
+      if(!durations.length) return result;
+      durations.sort((a,b)=>a-b);
+      const mid = Math.floor(durations.length/2);
+      result.median = durations.length%2? durations[mid] : (durations[mid-1]+durations[mid])/2;
+      result.samples = durations.length;
+      result.over5 = durations.filter(v=>v>5).length;
+      return result;
+    }
+
+    function formatDays(num){
+      if(num==null || !isFinite(num)) return '-';
+      const rounded = Math.round(num*10)/10;
+      return (rounded%1===0? rounded.toFixed(0) : rounded.toFixed(1)) + ' 天';
+    }
+
     function compute(rows){
       if(!rows.length) throw new Error('表格为空');
       const cols = Object.keys(rows[0]);
@@ -162,6 +238,8 @@
       const statusCol = pickCol(cols, STATUS_KEYS);
       const prob1Col = pickCol(cols, PROB1_KEYS);
       const prob2Col = pickCol(cols, PROB2_KEYS);
+      const arriveCols = pickColsAny(cols, ARRIVE_KEYS);
+      const clearCols = pickColsAny(cols, CLEAR_KEYS);
 
       // 仅统计有快递单号
       const scoped = rows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
@@ -184,6 +262,10 @@
       });
       const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v}));
 
+      // 卡转时效（目的国航班到达 -> 清关完成）
+      const {median: transferMedian, samples: transferSamples, over5: transferOver5} =
+        computeTransferStats(scoped, arriveCols, clearCols);
+
       return {
         cols, idCols, statusCol, prob1Col, prob2Col,
         total: scoped.length,
@@ -192,6 +274,11 @@
         normal: normalDeliv.length,
         issues: issueList,
         issueBase: problems.length,
+        arriveCols,
+        clearCols,
+        transferMedian,
+        transferSamples,
+        transferOver5,
       };
     }
 
@@ -204,6 +291,19 @@
       $('#k_signed').textContent = res.signed;
       $('#k_problem').textContent = res.problem;
       $('#k_normal').textContent = res.normal;
+
+      const timelyCard = $('#k_timely_card');
+      const timelyNum = $('#k_timely');
+      if(res.transferSamples>0 && res.transferMedian!=null){
+        timelyNum.textContent = formatDays(res.transferMedian);
+        timelyCard.classList.toggle('danger', res.transferMedian>5);
+        const overPct = res.transferSamples? ((res.transferOver5/res.transferSamples)*100) : 0;
+        timelyCard.title = `样本量：${res.transferSamples}；>5天：${res.transferOver5} (${overPct.toFixed(1)}%)`;
+      } else {
+        timelyNum.textContent = '-';
+        timelyCard.classList.remove('danger');
+        timelyCard.title = '未识别到卡转链路数据';
+      }
 
       // 表格渲染 + 行交互
       const tb = $('#issue_tbody'); tb.innerHTML='';
@@ -232,6 +332,8 @@
       pushTag('状态列', res.statusCol||'未识别');
       pushTag('问题件类型列', res.prob1Col||'未识别');
       pushTag('异常件类型列', res.prob2Col||'未识别');
+      pushTag('目的国航班到达列', res.arriveCols.join(', ')||'未识别');
+      pushTag('清关完成列', res.clearCols.join(', ')||'未识别');
 
       $('#btn_export').onclick = () => exportWorkbook(res);
     }
@@ -324,12 +426,17 @@
     // —— 导出 Excel（本地打包） ——
     function exportWorkbook(res){
       const wb = XLSX.utils.book_new();
+      const medianExport = res.transferMedian!=null? Math.round(res.transferMedian*10)/10 : '';
+      const overPctExport = res.transferSamples? +(res.transferOver5/res.transferSamples*100).toFixed(1) : 0;
       const sumData = [
         ["指标","数量"],
         ["总票数（仅统计有快递单号）", res.total],
         ["已签收", res.signed],
         ["问题件（派送/网点到件）", res.problem],
-        ["正常派送中（无问题标记）", res.normal]
+        ["正常派送中（无问题标记）", res.normal],
+        ["卡转时效（中位数，天）", medianExport],
+        ["卡转时效 >5天（票数/占比）", res.transferSamples? `${res.transferOver5} / ${overPctExport}%` : '0 / 0%'],
+        ["卡转时效样本量", res.transferSamples]
       ];
       const wsSum = XLSX.utils.aoa_to_sheet(sumData);
       XLSX.utils.book_append_sheet(wb, wsSum, '总览');
