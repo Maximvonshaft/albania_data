@@ -44,7 +44,7 @@
     .card{border-radius:16px;background:linear-gradient(180deg,#101827,#0b111a);padding:14px;box-shadow:var(--ring)}
     .kpi .label{color:var(--muted);font-size:12px}
     .kpi .num{font-size:clamp(22px,5vw,28px);font-weight:900;margin-top:6px}
-    .kpi .detail{font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.4}
+    .kpi .detail{font-size:medium;color:#94a3b8;margin-top:6px;line-height:1.5}
     .card.danger .num{color:var(--danger)}
 
     .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
@@ -148,6 +148,13 @@
     const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
     const ARRIVAL_KEYS = ["目的国航班到达"];
     const CLEAR_KEYS = ["清关完成"];
+
+    const TRANSFER_DESCRIPTIONS = {
+      earliestSpan: '从目的国航班到达 → 清关完成的最早时间之间的时间跨度',
+      earliestSegment: '从目的国航班到达 → 清关完成的最早时间',
+      latestSpan: '从目的国航班到达 → 清关完成的最晚时间之间的时间跨度',
+      latestSegment: '目的国航班到达 → 清关完成的最晚时间'
+    };
 
     const SIGNED_PAT = /(签收|已签收|成功签收|Delivered)/i;
     const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
@@ -526,6 +533,9 @@
     function applyMetrics(metrics){
       if(!metrics) return;
 
+      const desc = TRANSFER_DESCRIPTIONS;
+      const {earliestSpan, earliestSegment, latestSpan, latestSegment} = desc;
+
       $('#k_total').textContent = metrics.total;
       $('#k_signed').textContent = metrics.signed;
       $('#k_problem').textContent = metrics.problem;
@@ -560,14 +570,13 @@
           parts.push(`共有 ${over5} 票超出5天卡转时效`);
           if(transfer.ms != null && transfer.earliestArrival && transfer.earliestClear){
             const {text} = formatDuration(transfer.ms);
-            parts.push(`已完成跨度：${text}`);
-            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
+            parts.push(`已完成最早跨度：${text} [${earliestSpan}]`);
+            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)} [${earliestSegment}]`);
             if(transfer.latestMs != null){
               const latest = formatDuration(transfer.latestMs);
-              parts.push(`已完成最晚跨度：${latest.text}`);
+              parts.push(`已完成最晚跨度：${latest.text} [${latestSpan}]`);
               if(transfer.latestArrival && transfer.latestClear){
-                parts.push('最晚段，即为 目的国航班到达 → 清关完成（的最晚时间）');
-                parts.push(`${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`);
+                parts.push(`最晚段：${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)} [${latestSegment}]`);
               }
             }
           }
@@ -580,14 +589,13 @@
           numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
           if(transfer.earliestArrival && transfer.earliestClear){
             const parts = [];
-            parts.push(`跨度：${text}`);
-            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
+            parts.push(`已完成最早跨度：${text} [${earliestSpan}]`);
+            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)} [${earliestSegment}]`);
             if(transfer.latestMs != null){
               const latest = formatDuration(transfer.latestMs);
-              parts.push(`已完成最晚跨度：${latest.text}`);
+              parts.push(`已完成最晚跨度：${latest.text} [${latestSpan}]`);
               if(transfer.latestArrival && transfer.latestClear){
-                parts.push('最晚段，即为 目的国航班到达 → 清关完成（的最晚时间）');
-                parts.push(`${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`);
+                parts.push(`最晚段：${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)} [${latestSegment}]`);
               }
             }
             detailTransfer.innerHTML = parts.join('<br>');
