@@ -313,23 +313,47 @@
         const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v,ids:(issueIds.get(k)||[])}));
 
         const arrivals = [];
-        const clears = [];
-        const transferDurations = [];
+        const transferPairs = [];
+        let arrivalCount = 0;
+        let missingClearCount = 0;
         source.forEach(r=>{
           const a = arrivalCol ? parseDateTime(r[arrivalCol]) : null;
           const c = clearCol ? parseDateTime(r[clearCol]) : null;
-          if(a && !Number.isNaN(a.getTime())) arrivals.push(a);
-          if(c && !Number.isNaN(c.getTime())) clears.push(c);
-          if(a && c && c>=a){
-            transferDurations.push((c - a) / 86400000);
+          const aValid = a && !Number.isNaN(a.getTime());
+          const cValid = c && !Number.isNaN(c.getTime());
+          if(aValid){
+            arrivals.push(a);
+            arrivalCount += 1;
+          }
+          if(aValid && cValid && c >= a){
+            transferPairs.push({arrival:a, clear:c});
+          } else if(aValid && !cValid){
+            missingClearCount += 1;
           }
         });
         const earliestArrival = arrivals.length ? new Date(Math.min(...arrivals.map(d=>d.getTime()))) : null;
-        const earliestClear = clears.length ? new Date(Math.min(...clears.map(d=>d.getTime()))) : null;
-        const transferMs = (earliestArrival && earliestClear && earliestClear >= earliestArrival)
+        const earliestClear = transferPairs.length ? new Date(Math.min(...transferPairs.map(p=>p.clear.getTime()))) : null;
+        const normalMs = (earliestArrival && earliestClear && earliestClear >= earliestArrival)
           ? (earliestClear - earliestArrival)
           : null;
-        const over5 = transferDurations.filter(v=>v>5).length;
+        const over5 = transferPairs.filter(p=> (p.clear - p.arrival) / 86400000 > 5).length;
+        const sample = transferPairs.length;
+        let transferStatus = 'no_data';
+        let transferMs = null;
+        let transferNow = null;
+        if(arrivalCount){
+          if(sample){
+            transferStatus = missingClearCount ? 'partial_missing' : 'normal';
+            transferMs = normalMs;
+          } else if(missingClearCount === arrivalCount){
+            transferStatus = 'in_transit';
+            transferNow = new Date();
+            transferMs = earliestArrival ? (transferNow - earliestArrival) : null;
+          } else {
+            transferStatus = 'partial_missing';
+            transferMs = normalMs;
+          }
+        }
 
         return {
           total: source.length,
@@ -345,9 +369,13 @@
             earliestArrival,
             earliestClear,
             ms: transferMs,
-            sample: transferDurations.length,
+            now: transferNow,
+            status: transferStatus,
+            sample,
             over5,
-            over5Rate: transferDurations.length ? over5 / transferDurations.length : 0
+            over5Rate: sample ? over5 / sample : 0,
+            missingClearCount,
+            arrivalCount
           }
         };
       };
@@ -500,21 +528,50 @@
       cardTransfer.classList.remove('danger');
       numTransfer.textContent = '-';
       detailTransfer.textContent = '-';
-      if(metrics.transfer && metrics.transfer.ms != null){
-        const {text, daysDecimal, daysFormatted} = formatDuration(metrics.transfer.ms);
-        numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
-        if(metrics.transfer.earliestArrival && metrics.transfer.earliestClear){
-          detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(metrics.transfer.earliestArrival)} 至 ${formatDate(metrics.transfer.earliestClear)}`;
-        } else {
-          detailTransfer.textContent = '缺少时间数据';
-        }
-        if(daysDecimal != null && daysDecimal > 5){
+      cardTransfer.title = '';
+      const transfer = metrics.transfer;
+      if(transfer && transfer.status && transfer.status !== 'no_data'){
+        if(transfer.status === 'in_transit'){
           cardTransfer.classList.add('danger');
+          numTransfer.textContent = '卡转运输中';
+          if(transfer.earliestArrival && transfer.ms != null && transfer.now){
+            const {text} = formatDuration(transfer.ms);
+            detailTransfer.innerHTML = `实时跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.now)}`;
+          } else {
+            detailTransfer.textContent = '缺少时间数据';
+          }
+          cardTransfer.title = `全部 ${transfer.arrivalCount || 0} 票清关完成时间缺失`;
+        } else if(transfer.status === 'partial_missing'){
+          cardTransfer.classList.add('danger');
+          numTransfer.textContent = `清关异常：${transfer.missingClearCount || 0}`;
+          const parts = [];
+          parts.push(`共有 ${transfer.missingClearCount || 0} 票缺少清关完成时间`);
+          if(transfer.ms != null && transfer.earliestArrival && transfer.earliestClear){
+            const {text} = formatDuration(transfer.ms);
+            parts.push(`已完成跨度：${text}`);
+            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
+          }
+          detailTransfer.innerHTML = parts.join('<br>');
+          const sample = transfer.sample || 0;
+          const over5 = transfer.over5 || 0;
+          const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
+          cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
+        } else {
+          const {text, daysDecimal, daysFormatted} = formatDuration(transfer.ms);
+          numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
+          if(transfer.earliestArrival && transfer.earliestClear){
+            detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.earliestClear)}`;
+          } else {
+            detailTransfer.textContent = '缺少时间数据';
+          }
+          if(daysDecimal != null && daysDecimal > 5){
+            cardTransfer.classList.add('danger');
+          }
+          const sample = transfer.sample;
+          const over5 = transfer.over5;
+          const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
+          cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
         }
-        const sample = metrics.transfer.sample;
-        const over5 = metrics.transfer.over5;
-        const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
-        cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
       } else {
         numTransfer.textContent = '-';
         const hasCols = STATE.res && STATE.res.arrivalCol && STATE.res.clearCol;
