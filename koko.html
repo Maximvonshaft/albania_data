@@ -145,7 +145,20 @@
     const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
 
     const ph = s => (s==null?"":String(s).trim());
-    const isValidId = v => !!(v && /[A-Za-z0-9]/.test(v) && String(v).length >= 6);
+    const normalizeAlias = v => ph(v).toLowerCase().replace(/[\s_\-]/g, '');
+    const ID_HEADER_ALIASES = new Set([
+      'waybill','waybillno','waybillnumber','webellnumber','awb','trackingnumber','tracking',
+      '运单','运单号','快递单号','单号','订单号','包裹号','跟踪'
+    ]);
+    const isHeaderAlias = v => ID_HEADER_ALIASES.has(normalizeAlias(v));
+    const isValidId = v => {
+      const s = ph(v);
+      if(!s) return false;
+      if(s.length < 6) return false;
+      if(!/\d/.test(s)) return false;
+      if(isHeaderAlias(s)) return false;
+      return true;
+    };
 
     const pickCol = (cols, keys) => cols.find(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
     const pickColsAny = (cols, keys) => cols.filter(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
@@ -229,7 +242,6 @@
     function compute(rows){
       if(!rows.length) throw new Error('表格为空');
       const cols = Object.keys(rows[0]);
-
       // 识别列
       const idCols = pickColsAny(cols, ID_KEYS);
       const statusCol = pickCol(cols, STATUS_KEYS);
@@ -238,8 +250,27 @@
       const arrivalCol = pickCol(cols, ARRIVAL_KEYS);
       const clearCol = pickCol(cols, CLEAR_KEYS);
 
+      const normalizedColSet = new Set(cols.map(normalizeAlias));
+
+      const cleanedRows = rows.filter(r => {
+        const values = cols.map(c => ph(r[c])).filter(Boolean);
+        if(values.length){
+          const rowSet = new Set(values.map(normalizeAlias));
+          if(rowSet.size === normalizedColSet.size && [...rowSet].every(v => normalizedColSet.has(v))){
+            return false;
+          }
+        }
+        if(idCols.length){
+          const idValues = idCols.map(c => ph(r[c])).filter(Boolean);
+          if(idValues.length && idValues.every(isHeaderAlias)){
+            return false;
+          }
+        }
+        return true;
+      });
+
       // 仅统计有快递单号
-      const scoped = rows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
+      const scoped = cleanedRows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
 
       // 状态拆分
       const signed = scoped.filter(r => statusCol && SIGNED_PAT.test(ph(r[statusCol])));
