@@ -44,7 +44,7 @@
     .card{border-radius:16px;background:linear-gradient(180deg,#101827,#0b111a);padding:14px;box-shadow:var(--ring)}
     .kpi .label{color:var(--muted);font-size:12px}
     .kpi .num{font-size:clamp(22px,5vw,28px);font-weight:900;margin-top:6px}
-    .kpi .detail{font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.4}
+    .kpi .detail{font-size:medium;color:#94a3b8;margin-top:6px;line-height:1.4}
     .card.danger .num{color:var(--danger)}
 
     .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
@@ -523,6 +523,30 @@
       });
     }
 
+    function buildTransferDetail(transfer){
+      if(!transfer) return '';
+      const lines = [];
+      const missing = transfer.missingClearCount ?? transfer.arrivalCount ?? 0;
+      lines.push(`共有 ${missing} 票缺少清关完成时间`);
+      const over5 = transfer.over5 ?? 0;
+      lines.push(`共有 ${over5} 票超出5天卡转时效`);
+      const hasEarliestSpan = transfer.ms != null && transfer.earliestArrival && transfer.earliestClear;
+      const earliestSpan = hasEarliestSpan ? formatDuration(transfer.ms).text : '从目的国航班到达 → 清关完成的最早时间之间的时间跨度';
+      lines.push(`已完成最早跨度：[ ${earliestSpan} ]`);
+      const earliestSegment = transfer.earliestArrival && transfer.earliestClear
+        ? `${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`
+        : '从目的国航班到达 → 清关完成的最早时间';
+      lines.push(`最早段：[ ${earliestSegment} ]`);
+      const hasLatestSpan = transfer.latestMs != null && transfer.latestArrival && transfer.latestClear;
+      const latestSpan = hasLatestSpan ? formatDuration(transfer.latestMs).text : '从目的国航班到达 → 清关完成的最晚时间之间的时间跨度';
+      lines.push(`已完成最晚跨度：[ ${latestSpan} ]`);
+      const latestSegment = transfer.latestArrival && transfer.latestClear
+        ? `${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`
+        : '目的国航班到达 → 清关完成的最晚时间';
+      lines.push(`最晚段：[ ${latestSegment} ]`);
+      return lines.join('<br>');
+    }
+
     function applyMetrics(metrics){
       if(!metrics) return;
 
@@ -545,55 +569,29 @@
         if(transfer.status === 'in_transit'){
           cardTransfer.classList.add('danger');
           numTransfer.textContent = '卡转运输中';
+          const extraDetail = buildTransferDetail(transfer);
           if(transfer.earliestArrival && transfer.ms != null && transfer.now){
             const {text} = formatDuration(transfer.ms);
-            detailTransfer.innerHTML = `实时跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.now)}`;
+            const realtime = `实时跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.now)}`;
+            detailTransfer.innerHTML = extraDetail ? `${realtime}<br>${extraDetail}` : realtime;
           } else {
-            detailTransfer.textContent = '缺少时间数据';
+            detailTransfer.innerHTML = extraDetail || '缺少时间数据';
           }
           cardTransfer.title = `全部 ${transfer.arrivalCount || 0} 票清关完成时间缺失`;
         } else if(transfer.status === 'partial_missing'){
           cardTransfer.classList.add('danger');
           numTransfer.textContent = `共有 ${transfer.missingClearCount || 0} 票缺少清关完成时间`;
-          const parts = [];
-          const over5 = transfer.over5 || 0;
-          parts.push(`共有 ${over5} 票超出5天卡转时效`);
-          if(transfer.ms != null && transfer.earliestArrival && transfer.earliestClear){
-            const {text} = formatDuration(transfer.ms);
-            parts.push(`已完成跨度：${text}`);
-            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
-            if(transfer.latestMs != null){
-              const latest = formatDuration(transfer.latestMs);
-              parts.push(`已完成最晚跨度：${latest.text}`);
-              if(transfer.latestArrival && transfer.latestClear){
-                parts.push('最晚段，即为 目的国航班到达 → 清关完成（的最晚时间）');
-                parts.push(`${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`);
-              }
-            }
-          }
-          detailTransfer.innerHTML = parts.join('<br>');
+          const detailHtml = buildTransferDetail(transfer);
+          detailTransfer.innerHTML = detailHtml;
           const sample = transfer.sample || 0;
+          const over5 = transfer.over5 || 0;
           const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
           cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
         } else {
           const {text, daysDecimal, daysFormatted} = formatDuration(transfer.ms);
           numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
-          if(transfer.earliestArrival && transfer.earliestClear){
-            const parts = [];
-            parts.push(`跨度：${text}`);
-            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
-            if(transfer.latestMs != null){
-              const latest = formatDuration(transfer.latestMs);
-              parts.push(`已完成最晚跨度：${latest.text}`);
-              if(transfer.latestArrival && transfer.latestClear){
-                parts.push('最晚段，即为 目的国航班到达 → 清关完成（的最晚时间）');
-                parts.push(`${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`);
-              }
-            }
-            detailTransfer.innerHTML = parts.join('<br>');
-          } else {
-            detailTransfer.textContent = '缺少时间数据';
-          }
+          const detailHtml = buildTransferDetail(transfer);
+          detailTransfer.innerHTML = detailHtml || '缺少时间数据';
           if(daysDecimal != null && daysDecimal > 5){
             cardTransfer.classList.add('danger');
           }
