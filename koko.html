@@ -338,6 +338,14 @@
           : null;
         const over5 = transferPairs.filter(p=> (p.clear - p.arrival) / 86400000 > 5).length;
         const sample = transferPairs.length;
+        const latestPair = transferPairs.reduce((acc, pair)=>{
+          const span = pair.clear - pair.arrival;
+          if(span < 0) return acc;
+          if(!acc || span > acc.span){
+            return {span, arrival: pair.arrival, clear: pair.clear};
+          }
+          return acc;
+        }, null);
         let transferStatus = 'no_data';
         let transferMs = null;
         let transferNow = null;
@@ -375,7 +383,10 @@
             over5,
             over5Rate: sample ? over5 / sample : 0,
             missingClearCount,
-            arrivalCount
+            arrivalCount,
+            latestMs: latestPair ? latestPair.span : null,
+            latestArrival: latestPair ? latestPair.arrival : null,
+            latestClear: latestPair ? latestPair.clear : null
           }
         };
       };
@@ -543,24 +554,43 @@
           cardTransfer.title = `全部 ${transfer.arrivalCount || 0} 票清关完成时间缺失`;
         } else if(transfer.status === 'partial_missing'){
           cardTransfer.classList.add('danger');
-          numTransfer.textContent = `清关异常：${transfer.missingClearCount || 0}`;
+          numTransfer.textContent = `共有 ${transfer.missingClearCount || 0} 票缺少清关完成时间`;
           const parts = [];
-          parts.push(`共有 ${transfer.missingClearCount || 0} 票缺少清关完成时间`);
+          const over5 = transfer.over5 || 0;
+          parts.push(`共有 ${over5} 票超出5天卡转时效`);
           if(transfer.ms != null && transfer.earliestArrival && transfer.earliestClear){
             const {text} = formatDuration(transfer.ms);
             parts.push(`已完成跨度：${text}`);
             parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
+            if(transfer.latestMs != null){
+              const latest = formatDuration(transfer.latestMs);
+              parts.push(`已完成最晚跨度：${latest.text}`);
+              if(transfer.latestArrival && transfer.latestClear){
+                parts.push('最晚段，即为 目的国航班到达 → 清关完成（的最晚时间）');
+                parts.push(`${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`);
+              }
+            }
           }
           detailTransfer.innerHTML = parts.join('<br>');
           const sample = transfer.sample || 0;
-          const over5 = transfer.over5 || 0;
           const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
           cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
         } else {
           const {text, daysDecimal, daysFormatted} = formatDuration(transfer.ms);
           numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
           if(transfer.earliestArrival && transfer.earliestClear){
-            detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.earliestClear)}`;
+            const parts = [];
+            parts.push(`跨度：${text}`);
+            parts.push(`最早段：${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`);
+            if(transfer.latestMs != null){
+              const latest = formatDuration(transfer.latestMs);
+              parts.push(`已完成最晚跨度：${latest.text}`);
+              if(transfer.latestArrival && transfer.latestClear){
+                parts.push('最晚段，即为 目的国航班到达 → 清关完成（的最晚时间）');
+                parts.push(`${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`);
+              }
+            }
+            detailTransfer.innerHTML = parts.join('<br>');
           } else {
             detailTransfer.textContent = '缺少时间数据';
           }
