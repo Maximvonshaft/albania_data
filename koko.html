@@ -315,18 +315,41 @@
         const arrivals = [];
         const clears = [];
         const transferDurations = [];
+        let arrivalCount = 0;
+        let clearCount = 0;
+        let missingClearWithArrival = 0;
         source.forEach(r=>{
           const a = arrivalCol ? parseDateTime(r[arrivalCol]) : null;
           const c = clearCol ? parseDateTime(r[clearCol]) : null;
-          if(a && !Number.isNaN(a.getTime())) arrivals.push(a);
-          if(c && !Number.isNaN(c.getTime())) clears.push(c);
-          if(a && c && c>=a){
+          const hasArrival = a && !Number.isNaN(a.getTime());
+          const hasClear = c && !Number.isNaN(c.getTime());
+          if(hasArrival){
+            arrivals.push(a);
+            arrivalCount++;
+          }
+          if(hasClear){
+            clears.push(c);
+            clearCount++;
+          }
+          if(hasArrival && !hasClear){
+            missingClearWithArrival++;
+          }
+          if(hasArrival && hasClear && c>=a){
             transferDurations.push((c - a) / 86400000);
           }
         });
         const earliestArrival = arrivals.length ? new Date(Math.min(...arrivals.map(d=>d.getTime()))) : null;
         const earliestClear = clears.length ? new Date(Math.min(...clears.map(d=>d.getTime()))) : null;
-        const transferMs = (earliestArrival && earliestClear && earliestClear >= earliestArrival)
+        const completedCount = Math.max(0, arrivalCount - missingClearWithArrival);
+        let transferStatus = 'normal';
+        if(clearCol && arrivalCount > 0){
+          if(clearCount === 0 && missingClearWithArrival === arrivalCount){
+            transferStatus = 'in_transit';
+          } else if(clearCount > 0 && missingClearWithArrival > 0){
+            transferStatus = 'exception';
+          }
+        }
+        const transferMs = (transferStatus === 'normal' && earliestArrival && earliestClear && earliestClear >= earliestArrival)
           ? (earliestClear - earliestArrival)
           : null;
         const over5 = transferDurations.filter(v=>v>5).length;
@@ -347,7 +370,14 @@
             ms: transferMs,
             sample: transferDurations.length,
             over5,
-            over5Rate: transferDurations.length ? over5 / transferDurations.length : 0
+            over5Rate: transferDurations.length ? over5 / transferDurations.length : 0,
+            status: transferStatus,
+            arrivalCount,
+            clearCount,
+            completedCount,
+            missingClear: missingClearWithArrival,
+            hasArrivalCol: !!arrivalCol,
+            hasClearCol: !!clearCol
           }
         };
       };
@@ -500,25 +530,72 @@
       cardTransfer.classList.remove('danger');
       numTransfer.textContent = '-';
       detailTransfer.textContent = '-';
-      if(metrics.transfer && metrics.transfer.ms != null){
-        const {text, daysDecimal, daysFormatted} = formatDuration(metrics.transfer.ms);
+      const transfer = metrics.transfer;
+      if(!transfer){
+        const hasCols = STATE.res && STATE.res.arrivalCol && STATE.res.clearCol;
+        detailTransfer.textContent = hasCols ? '暂无可用的最早时间' : '缺少相关列';
+        cardTransfer.title = '样本量：0；>5 天：0（0.0%）';
+      } else if(transfer.status === 'in_transit'){
+        numTransfer.textContent = '卡转运输中';
+        if(transfer.earliestArrival){
+          const now = new Date();
+          const ms = Math.max(0, now - transfer.earliestArrival);
+          const {text} = formatDuration(ms);
+          detailTransfer.innerHTML = `实时跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(now)}`;
+        } else {
+          detailTransfer.textContent = '缺少航班到达时间';
+        }
+        const tickets = transfer.arrivalCount;
+        cardTransfer.title = tickets ? `清关完成时间全部缺失（${tickets} 票）` : '清关完成时间全部缺失';
+      } else if(transfer.status === 'exception'){
+        cardTransfer.classList.add('danger');
+        const missing = transfer.missingClear || 0;
+        numTransfer.textContent = `清关异常：${missing}票`;
+        if(transfer.ms != null && transfer.earliestArrival && transfer.earliestClear){
+          const {text, daysDecimal} = formatDuration(transfer.ms);
+          const completed = transfer.completedCount || transfer.sample || 0;
+          detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.earliestClear)}<br>（已完成清关 ${completed} 票，缺少清关完成 ${missing} 票）`;
+          if(daysDecimal != null && daysDecimal > 5){
+            cardTransfer.classList.add('danger');
+          }
+          const sample = transfer.sample;
+          const over5 = transfer.over5;
+          const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
+          cardTransfer.title = `清关异常 ${missing} 票；样本量：${sample}；>5 天：${over5}（${pct}%）`;
+        } else {
+          detailTransfer.textContent = '部分清关完成时间缺失，无法计算完整时效';
+          cardTransfer.title = `清关异常 ${missing} 票（缺少清关完成时间）`;
+        }
+      } else if(transfer.ms != null){
+        const {text, daysDecimal, daysFormatted} = formatDuration(transfer.ms);
         numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
-        if(metrics.transfer.earliestArrival && metrics.transfer.earliestClear){
-          detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(metrics.transfer.earliestArrival)} 至 ${formatDate(metrics.transfer.earliestClear)}`;
+        if(transfer.earliestArrival && transfer.earliestClear){
+          detailTransfer.innerHTML = `跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.earliestClear)}`;
         } else {
           detailTransfer.textContent = '缺少时间数据';
         }
         if(daysDecimal != null && daysDecimal > 5){
           cardTransfer.classList.add('danger');
         }
-        const sample = metrics.transfer.sample;
-        const over5 = metrics.transfer.over5;
+        const sample = transfer.sample;
+        const over5 = transfer.over5;
         const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
         cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
       } else {
         numTransfer.textContent = '-';
-        const hasCols = STATE.res && STATE.res.arrivalCol && STATE.res.clearCol;
-        detailTransfer.textContent = hasCols ? '暂无可用的最早时间' : '缺少相关列';
+        if(transfer.hasArrivalCol && transfer.hasClearCol){
+          if(transfer.arrivalCount === 0){
+            detailTransfer.textContent = '缺少航班到达时间';
+          } else {
+            detailTransfer.textContent = '暂无可用的最早时间';
+          }
+        } else if(!transfer.hasArrivalCol && !transfer.hasClearCol){
+          detailTransfer.textContent = '缺少相关列';
+        } else if(!transfer.hasArrivalCol){
+          detailTransfer.textContent = '缺少航班到达列';
+        } else {
+          detailTransfer.textContent = '缺少清关完成列';
+        }
         cardTransfer.title = '样本量：0；>5 天：0（0.0%）';
       }
 
