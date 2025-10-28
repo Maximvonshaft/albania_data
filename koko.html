@@ -29,6 +29,7 @@
     .btn:hover{background:#1a2941}
     .btn.primary{background:linear-gradient(90deg,#22d3ee,#a78bfa); color:#00111a}
     .btn.primary:hover{filter:brightness(1.08)}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:10px}
 
     .grid{display:grid;gap:12px;grid-template-columns:repeat(4,1fr);margin-top:14px}
     @media (max-width:1024px){.grid{grid-template-columns:repeat(2,1fr)}}
@@ -107,7 +108,7 @@
           </div>
           <div style="min-width:240px;overflow:auto">
             <table>
-              <thead><tr><th>问题类型</th><th style="width:120px">数量</th><th style="width:120px">占比</th></tr></thead>
+              <thead><tr><th>问题类型</th><th style="width:120px">数量</th><th style="width:120px">占比</th><th style="width:130px">导出单号</th></tr></thead>
               <tbody id="issue_tbody"></tbody>
             </table>
           </div>
@@ -145,7 +146,20 @@
     const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
 
     const ph = s => (s==null?"":String(s).trim());
-    const isValidId = v => !!(v && /[A-Za-z0-9]/.test(v) && String(v).length >= 6);
+    const normalizeAlias = v => ph(v).toLowerCase().replace(/[\s_\-]/g, '');
+    const ID_HEADER_ALIASES = new Set([
+      'waybill','waybillno','waybillnumber','webellnumber','awb','trackingnumber','tracking',
+      '运单','运单号','快递单号','单号','订单号','包裹号','跟踪'
+    ]);
+    const isHeaderAlias = v => ID_HEADER_ALIASES.has(normalizeAlias(v));
+    const isValidId = v => {
+      const s = ph(v);
+      if(!s) return false;
+      if(s.length < 6) return false;
+      if(!/\d/.test(s)) return false;
+      if(isHeaderAlias(s)) return false;
+      return true;
+    };
 
     const pickCol = (cols, keys) => cols.find(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
     const pickColsAny = (cols, keys) => cols.filter(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
@@ -229,7 +243,6 @@
     function compute(rows){
       if(!rows.length) throw new Error('表格为空');
       const cols = Object.keys(rows[0]);
-
       // 识别列
       const idCols = pickColsAny(cols, ID_KEYS);
       const statusCol = pickCol(cols, STATUS_KEYS);
@@ -238,8 +251,27 @@
       const arrivalCol = pickCol(cols, ARRIVAL_KEYS);
       const clearCol = pickCol(cols, CLEAR_KEYS);
 
+      const normalizedColSet = new Set(cols.map(normalizeAlias));
+
+      const cleanedRows = rows.filter(r => {
+        const values = cols.map(c => ph(r[c])).filter(Boolean);
+        if(values.length){
+          const rowSet = new Set(values.map(normalizeAlias));
+          if(rowSet.size === normalizedColSet.size && [...rowSet].every(v => normalizedColSet.has(v))){
+            return false;
+          }
+        }
+        if(idCols.length){
+          const idValues = idCols.map(c => ph(r[c])).filter(Boolean);
+          if(idValues.length && idValues.every(isHeaderAlias)){
+            return false;
+          }
+        }
+        return true;
+      });
+
       // 仅统计有快递单号
-      const scoped = rows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
+      const scoped = cleanedRows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
 
       // 状态拆分
       const signed = scoped.filter(r => statusCol && SIGNED_PAT.test(ph(r[statusCol])));
@@ -252,12 +284,23 @@
 
       // 问题类型占比（派送+网点到件）
       const mergeIssue = r => ph(r[prob1Col]) || ph(r[prob2Col]) || '未标注';
+      const pickPrimaryId = r => {
+        for(const col of idCols){
+          const val = ph(r[col]);
+          if(isValidId(val)) return val;
+        }
+        return '';
+      };
       const issueMap = new Map();
+      const issueIds = new Map();
       problems.forEach(r=>{
         const key = mergeIssue(r);
         issueMap.set(key, (issueMap.get(key)||0)+1);
+        const id = pickPrimaryId(r);
+        if(!issueIds.has(key)) issueIds.set(key, []);
+        issueIds.get(key).push(id || '（缺少单号）');
       });
-      const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v}));
+      const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v,ids:(issueIds.get(k)||[])}));
 
       // 卡转时效：最早时点 & 按行时效统计
       const arrivals = [];
@@ -345,13 +388,35 @@
       // 表格渲染 + 行交互
       const tb = $('#issue_tbody'); tb.innerHTML='';
       if(res.issues.length===0){
-        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0%</td></tr>';
+        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0%</td><td>-</td></tr>';
       } else {
-        res.issues.forEach(({type,count},i)=>{
+        res.issues.forEach(({type,count,ids},i)=>{
           const pct = res.issueBase? ((count/res.issueBase*100).toFixed(2)+'%'):'-';
           const tr = document.createElement('tr');
           tr.dataset.idx = i;
-          tr.innerHTML = `<td>${escapeHtml(type)}</td><td>${count}</td><td>${pct}</td>`;
+          const tdType = document.createElement('td');
+          tdType.textContent = type;
+          const tdCount = document.createElement('td');
+          tdCount.textContent = count;
+          const tdPct = document.createElement('td');
+          tdPct.textContent = pct;
+          const tdAction = document.createElement('td');
+          if(ids && ids.length){
+            const btn = document.createElement('button');
+            btn.className = 'btn small';
+            btn.textContent = '导出';
+            btn.addEventListener('click', e=>{
+              e.stopPropagation();
+              exportIssueIds(type, ids);
+            });
+            tdAction.appendChild(btn);
+          } else {
+            tdAction.textContent = '-';
+          }
+          tr.appendChild(tdType);
+          tr.appendChild(tdCount);
+          tr.appendChild(tdPct);
+          tr.appendChild(tdAction);
           tr.addEventListener('mouseenter',()=>setActive(i));
           tr.addEventListener('mouseleave',()=>setActive(-1));
           tb.appendChild(tr);
@@ -461,6 +526,32 @@
     function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"'"}[c])); }
 
     // —— 导出 Excel（本地打包） ——
+    function sanitizeSheetName(name){
+      const clean = String(name||'').replace(/[\[\]\:*?/\\]/g,' ').trim();
+      return clean ? clean.slice(0,31) : 'Sheet1';
+    }
+
+    function sanitizeFileName(name){
+      const clean = String(name||'').replace(/[\\/:*?"<>|]/g,' ').trim();
+      return clean || '未标注';
+    }
+
+    function exportIssueIds(type, ids){
+      if(!ids || !ids.length){
+        alert('该问题类型没有可导出的快递单号');
+        return;
+      }
+      const data = [["问题类型","快递单号"]];
+      ids.forEach(id=>{
+        data.push([type || '未标注', id || '（缺少单号）']);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(type));
+      const safe = sanitizeFileName(type);
+      XLSX.writeFile(wb, `问题类型_${safe}_${ts()}.xlsx`);
+    }
+
     function exportWorkbook(res){
       const wb = XLSX.utils.book_new();
       const sumData = [
