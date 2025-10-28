@@ -99,7 +99,7 @@
       <div class="card kpi"><div class="label">正常派送中（无问题标记）</div><div id="k_normal" class="num">-</div></div>
       <div class="card kpi"><div class="label">签收率</div><div id="k_signed_rate" class="num">-</div></div>
       <div class="card kpi"><div class="label">问题件率（派送/网点到件）</div><div id="k_problem_rate" class="num">-</div></div>
-      <div class="card kpi" id="card_transfer"><div class="label">卡转时效（目的国航班到达 → 清关完成）</div><div id="k_transfer" class="num">-</div><div id="k_transfer_detail" class="detail">-</div></div>
+      <div class="card kpi" id="card_transfer"><div class="label">卡转时效（目的国航班到达 → 清关完成）</div><div id="k_transfer">-</div><div id="k_transfer_detail" class="detail">-</div></div>
     </section>
 
     <div class="split" id="analytics" style="display:none">
@@ -527,9 +527,8 @@
       if(!transfer) return '';
       const lines = [];
       const missing = transfer.missingClearCount ?? transfer.arrivalCount ?? 0;
-      lines.push(`共有 ${missing} 票缺少清关完成时间`);
       const over5 = transfer.over5 ?? 0;
-      lines.push(`共有 ${over5} 票超出5天卡转时效`);
+      lines.push(`共有 ${over5} 票超出5天卡转时效，其中 ${missing} 票缺少清关时间`);
       const hasEarliestSpan = transfer.ms != null && transfer.earliestArrival && transfer.earliestClear;
       const earliestSpan = hasEarliestSpan ? formatDuration(transfer.ms).text : '从目的国航班到达 → 清关完成的最早时间之间的时间跨度';
       lines.push(`已完成最早跨度：[ ${earliestSpan} ]`);
@@ -580,7 +579,7 @@
           cardTransfer.title = `全部 ${transfer.arrivalCount || 0} 票清关完成时间缺失`;
         } else if(transfer.status === 'partial_missing'){
           cardTransfer.classList.add('danger');
-          numTransfer.textContent = `共有 ${transfer.missingClearCount || 0} 票缺少清关完成时间`;
+          numTransfer.textContent = '-';
           const detailHtml = buildTransferDetail(transfer);
           detailTransfer.innerHTML = detailHtml;
           const sample = transfer.sample || 0;
