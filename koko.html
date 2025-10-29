@@ -83,7 +83,7 @@
     <div id="uploader" class="uploader">
       <div>
         <div style="font-weight:800;font-size:14px">把文件拖进来，或点击右侧按钮选择文件</div>
-        <div class="hint">自动选取数据最多的工作表，输出：总票数（有单号）/ 已签收 / 问题件（派送中+网点到件）/ 正常派送中（无问题标记）。</div>
+        <div class="hint">自动选取数据最多的工作表，输出：总票数（有单号）/ 已签收 / 问题件（未签收）/ 正常派送中（无问题标记）。</div>
       </div>
       <div>
         <input id="file" type="file" accept=".xlsx,.xls" style="display:none" />
@@ -95,10 +95,10 @@
     <section id="kpis" class="grid" style="display:none">
       <div class="card kpi"><div class="label">总票数（仅统计有快递单号）</div><div id="k_total" class="num">-</div></div>
       <div class="card kpi"><div class="label">已签收</div><div id="k_signed" class="num">-</div></div>
-      <div class="card kpi"><div class="label">问题件（派送/网点到件）</div><div id="k_problem" class="num">-</div></div>
+      <div class="card kpi"><div class="label">问题件（未签收）</div><div id="k_problem" class="num">-</div><div id="k_problem_detail" class="detail">-</div></div>
       <div class="card kpi"><div class="label">正常派送中（无问题标记）</div><div id="k_normal" class="num">-</div></div>
       <div class="card kpi"><div class="label">签收率</div><div id="k_signed_rate" class="num">-</div></div>
-      <div class="card kpi"><div class="label">问题件率（派送/网点到件）</div><div id="k_problem_rate" class="num">-</div></div>
+      <div class="card kpi"><div class="label">问题件率</div><div id="k_problem_rate" class="num">-</div></div>
       <div class="card kpi" id="card_transfer"><div class="label">卡转时效（目的国航班到达 → 清关完成）</div><div id="k_transfer">-</div><div id="k_transfer_detail" class="detail">-</div></div>
     </section>
 
@@ -115,7 +115,7 @@
           </div>
           <div style="min-width:240px;overflow:auto">
             <table>
-              <thead><tr><th>问题类型</th><th style="width:120px">数量</th><th style="width:120px">占比</th><th style="width:130px">导出单号</th></tr></thead>
+              <thead><tr><th>问题类型</th><th style="width:120px">第一次登记数量</th><th style="width:120px">第二次登记数量</th><th style="width:120px">占比</th><th style="width:130px">导出单号</th></tr></thead>
               <tbody id="issue_tbody"></tbody>
             </table>
           </div>
@@ -146,6 +146,20 @@
     const STATUS_KEYS = ["最新状态","订单状态","状态","当前状态","物流状态"];
     const PROB1_KEYS = ["问题件类型","问题件类型名称"]; // 只看这两类
     const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
+    const PROB1_TIME_KEYS = [
+      "问题件登记时间",
+      "第一次问题件登记时间",
+      "问题件第一次登记时间",
+      "首次问题件登记时间",
+      "问题件登记时间1"
+    ];
+    const PROB2_TIME_KEYS = [
+      "第二次问题件登记时间",
+      "异常件登记时间",
+      "问题件第二次登记时间",
+      "二次问题件登记时间",
+      "异常件登记时间2"
+    ];
     const ARRIVAL_KEYS = ["目的国航班到达"];
     const CLEAR_KEYS = ["清关完成"];
 
@@ -260,6 +274,8 @@
       const statusCol = pickCol(cols, STATUS_KEYS);
       const prob1Col = pickCol(cols, PROB1_KEYS);
       const prob2Col = pickCol(cols, PROB2_KEYS);
+      const prob1TimeCol = pickCol(cols, PROB1_TIME_KEYS);
+      const prob2TimeCol = pickCol(cols, PROB2_TIME_KEYS);
       const arrivalCol = pickCol(cols, ARRIVAL_KEYS);
       const clearCol = pickCol(cols, CLEAR_KEYS);
 
@@ -286,7 +302,6 @@
       const scoped = cleanedRows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
 
       const probFlag = r => !!( (prob1Col && ph(r[prob1Col])) || (prob2Col && ph(r[prob2Col])) );
-      const mergeIssue = r => ph(r[prob1Col]) || ph(r[prob2Col]) || '未标注';
       const pickPrimaryId = r => {
         for(const col of idCols){
           const val = ph(r[col]);
@@ -295,22 +310,84 @@
         return '';
       };
 
+      const formatTimeValue = (col, row) => {
+        if(!col) return '';
+        const raw = row[col];
+        const parsed = parseDateTime(raw);
+        return parsed ? formatDate(parsed) : ph(raw);
+      };
+
       const buildMetrics = source => {
         const signed = statusCol ? source.filter(r => SIGNED_PAT.test(ph(r[statusCol]))) : [];
         const deliverSet = statusCol ? source.filter(r => DELIVERY_PAT.test(ph(r[statusCol]))) : [];
-        const problems = deliverSet.filter(probFlag);
         const normalDeliv = deliverSet.filter(r => !probFlag(r));
 
+        let unsignedProblemCount = 0;
+        let unsignedSecondCount = 0;
+
         const issueMap = new Map();
-        const issueIds = new Map();
-        problems.forEach(r=>{
-          const key = mergeIssue(r);
-          issueMap.set(key, (issueMap.get(key)||0)+1);
+
+        const ensureBucket = type => {
+          const key = type || '未标注';
+          if(!issueMap.has(key)){
+            issueMap.set(key, {type:key, entries:new Map()});
+          }
+          return issueMap.get(key);
+        };
+
+        source.forEach((r, idx)=>{
+          const statusVal = statusCol ? ph(r[statusCol]) : '';
+          const isSigned = statusCol ? SIGNED_PAT.test(statusVal) : false;
+          const firstType = prob1Col ? ph(r[prob1Col]) : '';
+          const secondType = prob2Col ? ph(r[prob2Col]) : '';
+          const firstTimeStr = formatTimeValue(prob1TimeCol, r);
+          const secondTimeStr = formatTimeValue(prob2TimeCol, r);
           const id = pickPrimaryId(r);
-          if(!issueIds.has(key)) issueIds.set(key, []);
-          issueIds.get(key).push(id || '（缺少单号）');
+          const rowKey = `${idx}_${id || ''}`;
+
+          if(!isSigned && (firstType || secondType)){
+            unsignedProblemCount += 1;
+            if(secondType) unsignedSecondCount += 1;
+
+            if(firstType){
+              const bucket = ensureBucket(firstType);
+              const entryMap = bucket.entries;
+              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, firstTime:'', secondTime:''};
+              existing.first = true;
+              if(firstTimeStr) existing.firstTime = firstTimeStr;
+              if(firstType === secondType && secondType){
+                existing.second = true;
+                if(secondTimeStr) existing.secondTime = secondTimeStr;
+              }
+              entryMap.set(rowKey, existing);
+            }
+
+            if(secondType && secondType !== firstType){
+              const bucket = ensureBucket(secondType);
+              const entryMap = bucket.entries;
+              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, firstTime:'', secondTime:''};
+              existing.second = true;
+              if(secondTimeStr) existing.secondTime = secondTimeStr;
+              if(firstTimeStr) existing.firstTime = firstTimeStr;
+              entryMap.set(rowKey, existing);
+            }
+          }
         });
-        const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v,ids:(issueIds.get(k)||[])}));
+
+        const issueList = Array.from(issueMap.values()).map(bucket => {
+          const entries = Array.from(bucket.entries.values());
+          const firstCount = entries.filter(e=>e.first).length;
+          const secondCount = entries.filter(e=>e.second).length;
+          const totalCount = firstCount + secondCount;
+          return {
+            type: bucket.type,
+            firstCount,
+            secondCount,
+            totalCount,
+            entries
+          };
+        }).filter(item => item.totalCount > 0)
+          .sort((a,b)=>b.totalCount - a.totalCount);
 
         const arrivals = [];
         const transferPairs = [];
@@ -366,12 +443,14 @@
         return {
           total: source.length,
           signed: signed.length,
-          problem: problems.length,
+          problem: unsignedProblemCount,
           normal: normalDeliv.length,
           issues: issueList,
-          issueBase: problems.length,
+          issueBase: issueList.reduce((acc, cur)=>acc + cur.totalCount, 0),
+          problemUnsigned: unsignedProblemCount,
+          problemSecondUnsigned: unsignedSecondCount,
           signedRate: source.length ? signed.length / source.length : 0,
-          problemRate: deliverSet.length ? problems.length / deliverSet.length : 0,
+          problemRateValue: unsignedProblemCount ? source.length / unsignedProblemCount : null,
           deliverBase: deliverSet.length,
           transfer: {
             earliestArrival,
@@ -426,6 +505,8 @@
 
       return {
         cols, idCols, statusCol, prob1Col, prob2Col,
+        prob1TimeCol,
+        prob2TimeCol,
         arrivalCol,
         clearCol,
         summary,
@@ -465,6 +546,8 @@
       pushTag('状态列', res.statusCol||'未识别');
       pushTag('问题件类型列', res.prob1Col||'未识别');
       pushTag('异常件类型列', res.prob2Col||'未识别');
+      pushTag('第一次问题登记时间列', res.prob1TimeCol||'未识别');
+      pushTag('第二次问题登记时间列', res.prob2TimeCol||'未识别');
       pushTag('目的国航班到达列', res.arrivalCol||'未识别');
       pushTag('清关完成列', res.clearCol||'未识别');
 
@@ -554,7 +637,26 @@
       $('#k_problem').textContent = metrics.problem;
       $('#k_normal').textContent = metrics.normal;
       $('#k_signed_rate').textContent = formatPercent(metrics.signedRate);
-      $('#k_problem_rate').textContent = metrics.deliverBase ? formatPercent(metrics.problemRate) : '-';
+      const problemDetail = $('#k_problem_detail');
+      if(problemDetail){
+        if(metrics.problemSecondUnsigned != null){
+          problemDetail.textContent = `目前还有 ${metrics.problemSecondUnsigned} 问题件被二次标记且未签收`;
+        } else {
+          problemDetail.textContent = '暂无数据';
+        }
+      }
+      const problemRateEl = $('#k_problem_rate');
+      if(metrics.problemUnsigned){
+        problemRateEl.textContent = `${metrics.total}/${metrics.problemUnsigned}`;
+        if(metrics.problemRateValue != null){
+          problemRateEl.title = `约 ${metrics.problemRateValue.toFixed(2)} 倍`;
+        } else {
+          problemRateEl.title = '';
+        }
+      } else {
+        problemRateEl.textContent = '-';
+        problemRateEl.title = '';
+      }
 
       const cardTransfer = $('#card_transfer');
       const numTransfer = $('#k_transfer');
@@ -608,33 +710,36 @@
 
       const tb = $('#issue_tbody'); tb.innerHTML='';
       if(!metrics.issues || metrics.issues.length===0){
-        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0%</td><td>-</td></tr>';
+        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0</td><td>0%</td><td>-</td></tr>';
       } else {
-        metrics.issues.forEach(({type,count,ids},i)=>{
-          const pct = metrics.issueBase? ((count/metrics.issueBase*100).toFixed(2)+'%'):'-';
+        metrics.issues.forEach(({type,firstCount,secondCount,totalCount,entries},i)=>{
+          const pct = metrics.issueBase? ((totalCount/metrics.issueBase*100).toFixed(2)+'%'):'-';
           const tr = document.createElement('tr');
           tr.dataset.idx = i;
           const tdType = document.createElement('td');
           tdType.textContent = type;
-          const tdCount = document.createElement('td');
-          tdCount.textContent = count;
+          const tdFirst = document.createElement('td');
+          tdFirst.textContent = firstCount;
+          const tdSecond = document.createElement('td');
+          tdSecond.textContent = secondCount;
           const tdPct = document.createElement('td');
           tdPct.textContent = pct;
           const tdAction = document.createElement('td');
-          if(ids && ids.length){
+          if(entries && entries.length){
             const btn = document.createElement('button');
             btn.className = 'btn small';
             btn.textContent = '导出';
             btn.addEventListener('click', e=>{
               e.stopPropagation();
-              exportIssueIds(type, ids);
+              exportIssueEntries(type, entries);
             });
             tdAction.appendChild(btn);
           } else {
             tdAction.textContent = '-';
           }
           tr.appendChild(tdType);
-          tr.appendChild(tdCount);
+          tr.appendChild(tdFirst);
+          tr.appendChild(tdSecond);
           tr.appendChild(tdPct);
           tr.appendChild(tdAction);
           tr.addEventListener('mouseenter',()=>setActive(i));
@@ -643,7 +748,7 @@
         });
       }
 
-      drawDonutSVG(metrics.issues.map(x=>x.count), metrics.issues.map(x=>x.type), metrics.issueBase);
+      drawDonutSVG(metrics.issues);
     }
 
     // —— 可交互甜甜圈（SVG） ——
@@ -656,17 +761,19 @@
       const large = (a1-a0) > 180 ? 1 : 0;
       return `M ${x0} ${y0} A ${r1} ${r1} 0 ${large} 1 ${x1} ${y1} L ${x2} ${y2} A ${r2} ${r2} 0 ${large} 0 ${x3} ${y3} Z`;
     }
-    function drawDonutSVG(series, labels, base){
+    function drawDonutSVG(issues){
       const svg = $('#donut_svg'); svg.innerHTML=''; SEGMENTS = [];
-      const cx=110, cy=110, rOuter=100, rInner=62; let acc=0; const sum=series.reduce((a,b)=>a+b,0);
-      if(sum<=0){
+      const cx=110, cy=110, rOuter=100, rInner=62; let acc=0;
+      const series = issues.map(item=>item.totalCount);
+      const base = series.reduce((a,b)=>a+b,0);
+      if(base<=0){
         // 空态画环
         const ring = document.createElementNS('http://www.w3.org/2000/svg','circle');
         ring.setAttribute('cx',cx); ring.setAttribute('cy',cy); ring.setAttribute('r',rOuter);
         ring.setAttribute('fill','#334155'); svg.appendChild(ring);
       } else {
         series.forEach((v,i)=>{
-          const a0=acc/sum*360, a1=(acc+v)/sum*360; acc+=v;
+          const a0=acc/base*360, a1=(acc+v)/base*360; acc+=v;
           const path = document.createElementNS('http://www.w3.org/2000/svg','path');
           path.setAttribute('d', arcPath(cx,cy,rOuter,rInner,a0,a1));
           path.setAttribute('fill', palette[i%palette.length]);
@@ -697,7 +804,14 @@
       text2.setAttribute('font-size','12'); text2.textContent='样本'; svg.appendChild(text2);
 
       // 保存标签和占比到节点上用于 tooltip
-      SEGMENTS.forEach((p,i)=>{ p.dataset.label = labels[i]||''; p.dataset.count = series[i]; p.dataset.base = base||0; });
+      SEGMENTS.forEach((p,i)=>{
+        const issue = issues[i] || {};
+        p.dataset.label = issue.type || '';
+        p.dataset.count = series[i] || 0;
+        p.dataset.base = base || 0;
+        p.dataset.first = issue.firstCount || 0;
+        p.dataset.second = issue.secondCount || 0;
+      });
     }
 
     function setActive(i, evt){
@@ -717,7 +831,9 @@
       if(i>=0 && SEGMENTS[i]){
         const n=SEGMENTS[i];
         const b=Number(n.dataset.base)||0, c=Number(n.dataset.count)||0, pct = b? (c*100/b).toFixed(2)+'%' : '0%';
-        tt.innerHTML = `<b>${escapeHtml(n.dataset.label||'')}</b> · ${c} / ${pct}`;
+        const first = Number(n.dataset.first)||0;
+        const second = Number(n.dataset.second)||0;
+        tt.innerHTML = `<b>${escapeHtml(n.dataset.label||'')}</b> · 总计 ${c} / ${pct}<br>第一次：${first} 第二次：${second}`;
         tt.classList.add('show');
         if(evt && evt.clientX){ // 放在鼠标附近
           const rect = tt.parentElement.getBoundingClientRect();
@@ -742,14 +858,19 @@
       return clean || '未标注';
     }
 
-    function exportIssueIds(type, ids){
-      if(!ids || !ids.length){
+    function exportIssueEntries(type, entries){
+      if(!entries || !entries.length){
         alert('该问题类型没有可导出的快递单号');
         return;
       }
-      const data = [["问题类型","快递单号"]];
-      ids.forEach(id=>{
-        data.push([type || '未标注', id || '（缺少单号）']);
+      const data = [["问题类型","快递单号","第一次登记问题件时间","第二次登记问题件时间"]];
+      entries.forEach(entry=>{
+        data.push([
+          type || '未标注',
+          entry.id || '（缺少单号）',
+          entry.firstTime || '',
+          entry.secondTime || ''
+        ]);
       });
       const ws = XLSX.utils.aoa_to_sheet(data);
       const wb = XLSX.utils.book_new();
@@ -764,21 +885,41 @@
         ["指标","数量"],
         ["总票数（仅统计有快递单号）", metrics.total],
         ["已签收", metrics.signed],
-        ["问题件（派送/网点到件）", metrics.problem],
+        ["问题件（未签收）", metrics.problem],
+        ["未签收二次问题件", metrics.problemSecondUnsigned],
         ["正常派送中（无问题标记）", metrics.normal],
         ["签收率", metrics.total ? (metrics.signedRate*100).toFixed(2)+'%' : '-'],
-        ["问题件率（派送/网点到件）", metrics.deliverBase ? (metrics.problemRate*100).toFixed(2)+'%' : '-'],
+        ["问题件率（总票数/未签收问题件）", metrics.problemUnsigned ? `${metrics.total}/${metrics.problemUnsigned}` : '-'],
         ["卡转时效（最早段，小数天）", metrics.transfer && metrics.transfer.ms != null ? (metrics.transfer.ms/86400000).toFixed(2) : '-']
       ];
       const wsSum = XLSX.utils.aoa_to_sheet(sumData);
       XLSX.utils.book_append_sheet(wb, wsSum, '总览');
 
       // 问题占比
-      const issueData = [["问题类型","数量","占比(%)"]];
+      const issueData = [["问题类型","第一次登记数量","第二次登记数量","占比(%)"]];
       const base = metrics.issueBase || 0;
-      metrics.issues.forEach(x=> issueData.push([x.type, x.count, base? +(x.count*100/base).toFixed(2): 0]));
+      metrics.issues.forEach(x=> issueData.push([
+        x.type,
+        x.firstCount,
+        x.secondCount,
+        base ? +(x.totalCount*100/base).toFixed(2) : 0
+      ]));
       const wsIssue = XLSX.utils.aoa_to_sheet(issueData);
       XLSX.utils.book_append_sheet(wb, wsIssue, '问题类型占比');
+
+      const detailData = [["问题类型","快递单号","第一次登记问题件时间","第二次登记问题件时间"]];
+      metrics.issues.forEach(item=>{
+        item.entries.forEach(entry=>{
+          detailData.push([
+            item.type,
+            entry.id || '（缺少单号）',
+            entry.firstTime || '',
+            entry.secondTime || ''
+          ]);
+        });
+      });
+      const wsDetail = XLSX.utils.aoa_to_sheet(detailData);
+      XLSX.utils.book_append_sheet(wb, wsDetail, '问题件明细');
 
       const suffix = label && label !== '全部' ? `_${sanitizeFileName(label)}` : '';
       XLSX.writeFile(wb, `阿尔巴尼亚派件日报${suffix ? suffix : '_汇总'}_${ts()}.xlsx`);
