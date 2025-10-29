@@ -449,8 +449,8 @@
           issueBase: issueList.reduce((acc, cur)=>acc + cur.totalCount, 0),
           problemUnsigned: unsignedProblemCount,
           problemSecondUnsigned: unsignedSecondCount,
-          signedRate: source.length ? signed.length / source.length : 0,
-          problemRateValue: unsignedProblemCount ? source.length / unsignedProblemCount : null,
+          signedRate: source.length ? signed.length / source.length : null,
+          problemRateValue: source.length ? unsignedProblemCount / source.length : null,
           deliverBase: deliverSet.length,
           transfer: {
             earliestArrival,
@@ -640,22 +640,22 @@
       const problemDetail = $('#k_problem_detail');
       if(problemDetail){
         if(metrics.problemSecondUnsigned != null){
-          problemDetail.textContent = `目前还有 ${metrics.problemSecondUnsigned} 问题件被二次标记且未签收`;
+          problemDetail.textContent = metrics.problemSecondUnsigned > 0
+            ? `目前还有 ${metrics.problemSecondUnsigned} 问题件被二次标记且未签收`
+            : '';
         } else {
           problemDetail.textContent = '暂无数据';
         }
       }
       const problemRateEl = $('#k_problem_rate');
-      if(metrics.problemUnsigned){
-        problemRateEl.textContent = `${metrics.total}/${metrics.problemUnsigned}`;
+      if(problemRateEl){
         if(metrics.problemRateValue != null){
-          problemRateEl.title = `约 ${metrics.problemRateValue.toFixed(2)} 倍`;
+          problemRateEl.textContent = formatPercent(metrics.problemRateValue);
+          problemRateEl.title = `未签收问题件：${metrics.problemUnsigned || 0} / 总票数：${metrics.total || 0}`;
         } else {
+          problemRateEl.textContent = '-';
           problemRateEl.title = '';
         }
-      } else {
-        problemRateEl.textContent = '-';
-        problemRateEl.title = '';
       }
 
       const cardTransfer = $('#card_transfer');
@@ -881,32 +881,6 @@
 
     function exportWorkbook(metrics, label){
       const wb = XLSX.utils.book_new();
-      const sumData = [
-        ["指标","数量"],
-        ["总票数（仅统计有快递单号）", metrics.total],
-        ["已签收", metrics.signed],
-        ["问题件（未签收）", metrics.problem],
-        ["未签收二次问题件", metrics.problemSecondUnsigned],
-        ["正常派送中（无问题标记）", metrics.normal],
-        ["签收率", metrics.total ? (metrics.signedRate*100).toFixed(2)+'%' : '-'],
-        ["问题件率（总票数/未签收问题件）", metrics.problemUnsigned ? `${metrics.total}/${metrics.problemUnsigned}` : '-'],
-        ["卡转时效（最早段，小数天）", metrics.transfer && metrics.transfer.ms != null ? (metrics.transfer.ms/86400000).toFixed(2) : '-']
-      ];
-      const wsSum = XLSX.utils.aoa_to_sheet(sumData);
-      XLSX.utils.book_append_sheet(wb, wsSum, '总览');
-
-      // 问题占比
-      const issueData = [["问题类型","第一次登记数量","第二次登记数量","占比(%)"]];
-      const base = metrics.issueBase || 0;
-      metrics.issues.forEach(x=> issueData.push([
-        x.type,
-        x.firstCount,
-        x.secondCount,
-        base ? +(x.totalCount*100/base).toFixed(2) : 0
-      ]));
-      const wsIssue = XLSX.utils.aoa_to_sheet(issueData);
-      XLSX.utils.book_append_sheet(wb, wsIssue, '问题类型占比');
-
       const detailData = [["问题类型","快递单号","第一次登记问题件时间","第二次登记问题件时间"]];
       metrics.issues.forEach(item=>{
         item.entries.forEach(entry=>{
@@ -918,11 +892,14 @@
           ]);
         });
       });
+      if(detailData.length === 1){
+        detailData.push(["-","-","-","-"]);
+      }
       const wsDetail = XLSX.utils.aoa_to_sheet(detailData);
       XLSX.utils.book_append_sheet(wb, wsDetail, '问题件明细');
 
       const suffix = label && label !== '全部' ? `_${sanitizeFileName(label)}` : '';
-      XLSX.writeFile(wb, `阿尔巴尼亚派件日报${suffix ? suffix : '_汇总'}_${ts()}.xlsx`);
+      XLSX.writeFile(wb, `导出汇总${suffix || ''}.xlsx`);
     }
 
     function ts(){
