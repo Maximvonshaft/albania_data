@@ -144,8 +144,19 @@
     // —— 关键词配置 ——
     const ID_KEYS = ["单号","订单号","运单","Waybill","AWB","Tracking","快递单号","跟踪","运单号","条码","包裹号"];
     const STATUS_KEYS = ["最新状态","订单状态","状态","当前状态","物流状态"];
-    const PROB1_KEYS = ["问题件类型","问题件类型名称"]; // 只看这两类
-    const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
+    const PROB1_KEYS = [
+      "第一次登记问题件类型",
+      "问题件第一次登记类型",
+      "问题件类型",
+      "问题件类型名称"
+    ]; // 只看这两类
+    const PROB2_KEYS = [
+      "第二次问题件登记类型",
+      "问题件第二次登记类型",
+      "二次问题件类型",
+      "异常件类型",
+      "异常件类型名称"
+    ]; // 只看这两类
     const PROB1_TIME_KEYS = [
       "问题件登记时间",
       "第一次问题件登记时间",
@@ -182,7 +193,13 @@
       return true;
     };
 
-    const pickCol = (cols, keys) => cols.find(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
+    const pickCol = (cols, keys) => {
+      for(const key of keys){
+        const match = cols.find(c => c.toLowerCase().includes(key.toLowerCase()));
+        if(match) return match;
+      }
+      return undefined;
+    };
     const pickColsAny = (cols, keys) => cols.filter(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
 
     const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30));
