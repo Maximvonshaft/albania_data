@@ -352,11 +352,13 @@
             if(firstType){
               const bucket = ensureBucket(firstType);
               const entryMap = bucket.entries;
-              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, firstTime:'', secondTime:''};
+              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, hasSecond:false, firstTime:'', secondTime:''};
               existing.first = true;
+              if(secondType) existing.hasSecond = true;
               if(firstTimeStr) existing.firstTime = firstTimeStr;
               if(firstType === secondType && secondType){
                 existing.second = true;
+                existing.hasSecond = true;
                 if(secondTimeStr) existing.secondTime = secondTimeStr;
               }
               entryMap.set(rowKey, existing);
@@ -365,8 +367,9 @@
             if(secondType && secondType !== firstType){
               const bucket = ensureBucket(secondType);
               const entryMap = bucket.entries;
-              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, firstTime:'', secondTime:''};
+              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, hasSecond:false, firstTime:'', secondTime:''};
               existing.second = true;
+              existing.hasSecond = true;
               if(secondTimeStr) existing.secondTime = secondTimeStr;
               if(firstTimeStr) existing.firstTime = firstTimeStr;
               entryMap.set(rowKey, existing);
@@ -375,10 +378,13 @@
         });
 
         const issueList = Array.from(issueMap.values()).map(bucket => {
-          const entries = Array.from(bucket.entries.values());
-          const firstCount = entries.filter(e=>e.first).length;
+          const entries = Array.from(bucket.entries.values()).map(e=>({
+            ...e,
+            hasSecond: !!e.hasSecond
+          }));
+          const firstCount = entries.filter(e=>e.first && !e.hasSecond).length;
           const secondCount = entries.filter(e=>e.second).length;
-          const totalCount = firstCount + secondCount;
+          const totalCount = entries.filter(e=>(e.first && !e.hasSecond) || e.second).length;
           return {
             type: bucket.type,
             firstCount,
