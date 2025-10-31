@@ -48,6 +48,18 @@
     .card.danger .num{color:var(--danger)}
 
     .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
+    .trend-card{margin-top:12px}
+    .trend-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .trend-head h3{margin:0;font-size:16px}
+    .trend-sub{color:var(--muted);font-size:12px}
+    .trend-canvas-wrap{position:relative}
+    #trend_canvas{width:100%;height:280px;display:block}
+    .trend-empty{display:none;text-align:center;color:var(--muted);padding:36px 0}
+    .trend-legend{display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--muted);flex-wrap:wrap;align-items:center}
+    .legend-item{display:flex;align-items:center;gap:6px}
+    .legend-dot{width:10px;height:10px;border-radius:999px;background:#22d3ee;display:inline-block}
+    .trend-tooltip{position:absolute;top:12px;left:12px;padding:8px 10px;border-radius:10px;background:#0b1422;border:1px solid #1f2b3e;box-shadow:var(--ring);color:var(--ink);font-size:12px;pointer-events:none;opacity:0;transition:.12s}
+    .trend-tooltip.show{opacity:1}
 
     table{width:100%;border-collapse:collapse;font-size:13px}
     th,td{padding:9px 10px;border-bottom:1px solid #1f2b3e}
@@ -92,6 +104,18 @@
     </div>
 
     <div id="batch_bar" class="batch-bar"></div>
+    <div id="trend_card" class="card trend-card" style="display:none">
+      <div class="trend-head">
+        <h3>签收趋势概览</h3>
+        <div id="trend_subtitle" class="trend-sub"></div>
+      </div>
+      <div class="trend-canvas-wrap">
+        <canvas id="trend_canvas"></canvas>
+        <div id="trend_tooltip" class="trend-tooltip"></div>
+      </div>
+      <div id="trend_empty" class="trend-empty">暂无可绘制的数据</div>
+      <div id="trend_legend" class="trend-legend"></div>
+    </div>
     <section id="kpis" class="grid" style="display:none">
       <div class="card kpi"><div class="label">总票数（仅统计有快递单号）</div><div id="k_total" class="num">-</div></div>
       <div class="card kpi"><div class="label">已签收</div><div id="k_signed" class="num">-</div></div>
@@ -157,6 +181,17 @@
       "异常件类型",
       "异常件类型名称"
     ]; // 只看这两类
+    const SIGNED_TIME_KEYS = [
+      "签收时间",
+      "签收日期",
+      "Signed Time",
+      "签收时间（当地）",
+      "签收时间(当地)",
+      "签收时间-当地",
+      "签收时间-本地",
+      "签收时间（本地）",
+      "签收完成时间"
+    ];
     const PROB1_TIME_KEYS = [
       "问题件登记时间",
       "第一次问题件登记时间",
@@ -273,6 +308,8 @@
       return (v*100).toFixed(2) + '%';
     }
 
+    const getCssVar = name => getComputedStyle(document.body).getPropertyValue(name).trim() || name;
+
     function sheetToJSONPickBiggest(wb){
       let maxLen=0, pick=null, data=null;
       wb.SheetNames.forEach(name=>{
@@ -291,6 +328,7 @@
       const statusCol = pickCol(cols, STATUS_KEYS);
       const prob1Col = pickCol(cols, PROB1_KEYS);
       const prob2Col = pickCol(cols, PROB2_KEYS);
+      const signedTimeCol = pickCol(cols, SIGNED_TIME_KEYS);
       const prob1TimeCol = pickCol(cols, PROB1_TIME_KEYS);
       const prob2TimeCol = pickCol(cols, PROB2_TIME_KEYS);
       const arrivalCol = pickCol(cols, ARRIVAL_KEYS);
@@ -352,6 +390,8 @@
           return issueMap.get(key);
         };
 
+        const dailySignedMap = new Map();
+
         source.forEach((r, idx)=>{
           const statusVal = statusCol ? ph(r[statusCol]) : '';
           const isSigned = statusCol ? SIGNED_PAT.test(statusVal) : false;
@@ -361,6 +401,18 @@
           const secondTimeStr = formatTimeValue(prob2TimeCol, r);
           const id = pickPrimaryId(r);
           const rowKey = `${idx}_${id || ''}`;
+
+          if(isSigned && signedTimeCol){
+            const signedDate = parseDateTime(r[signedTimeCol]);
+            if(signedDate && !Number.isNaN(signedDate.getTime())){
+              const dateKey = formatDateOnly(signedDate);
+              if(dateKey){
+                const bucket = dailySignedMap.get(dateKey) || {date:dateKey,count:0};
+                bucket.count += 1;
+                dailySignedMap.set(dateKey, bucket);
+              }
+            }
+          }
 
           if(!isSigned && (firstType || secondType)){
             unsignedProblemCount += 1;
@@ -405,6 +457,9 @@
           };
         }).filter(item => item.totalCount > 0)
           .sort((a,b)=>b.totalCount - a.totalCount);
+
+        const dailySigned = Array.from(dailySignedMap.values())
+          .sort((a,b)=>a.date.localeCompare(b.date));
 
         const arrivals = [];
         const transferPairs = [];
@@ -469,6 +524,7 @@
           signedRate: source.length ? signed.length / source.length : null,
           problemRateValue: source.length ? unsignedProblemCount / source.length : null,
           deliverBase: deliverSet.length,
+          dailySigned,
           transfer: {
             earliestArrival,
             earliestClear,
@@ -505,13 +561,22 @@
       }
 
       const batches = Array.from(batchMap.entries())
-        .sort((a,b)=>b[0].localeCompare(a[0]))
+        .sort((a,b)=>a[0].localeCompare(b[0]))
         .map(([key, list])=>({
           key,
           label:key,
           metrics: buildMetrics(list),
           size:list.length
         }));
+
+      const trendAll = batches.map(item=>({
+        key: item.key,
+        label: item.label,
+        signedRate: item.metrics?.signedRate ?? null,
+        problemRate: item.metrics?.problemRateValue ?? null,
+        problemUnsigned: item.metrics?.problemUnsigned ?? null,
+        total: item.metrics?.total ?? null
+      }));
 
       const ungrouped = missingBatch.length ? {
         key:'__missing__',
@@ -522,13 +587,15 @@
 
       return {
         cols, idCols, statusCol, prob1Col, prob2Col,
+        signedTimeCol,
         prob1TimeCol,
         prob2TimeCol,
         arrivalCol,
         clearCol,
         summary,
         batches,
-        ungrouped
+        ungrouped,
+        trendAll
       };
     }
 
@@ -537,7 +604,10 @@
       batchMap:new Map(),
       currentKey:'all',
       currentLabel:'全部',
-      currentMetrics:null
+      currentMetrics:null,
+      trendAll:[],
+      trendCache:null,
+      signedTimeCol:null
     };
 
     function render(res){
@@ -547,6 +617,9 @@
       STATE.currentKey = 'all';
       STATE.currentLabel = '全部';
       STATE.currentMetrics = res.summary;
+      STATE.trendAll = res.trendAll || [];
+      STATE.signedTimeCol = res.signedTimeCol || null;
+      STATE.trendCache = null;
 
       buildBatchBar(res);
       $('#kpis').style.display='grid';
@@ -573,6 +646,8 @@
           exportWorkbook(STATE.currentMetrics, STATE.currentLabel);
         }
       };
+
+      renderTrendForKey('all');
     }
 
     function buildBatchBar(res){
@@ -618,6 +693,7 @@
       STATE.currentLabel = info.label;
       STATE.currentMetrics = info.metrics;
       applyMetrics(info.metrics);
+      renderTrendForKey(key);
       $$('#batch_bar .batch-btn').forEach(btn=>{
         btn.classList.toggle('active', btn.dataset.key === key);
       });
@@ -767,6 +843,415 @@
 
       drawDonutSVG(metrics.issues);
     }
+
+    function renderTrendForKey(key){
+      const card = $('#trend_card');
+      if(!card) return;
+      const canvas = $('#trend_canvas');
+      const legend = $('#trend_legend');
+      const subtitle = $('#trend_subtitle');
+      const empty = $('#trend_empty');
+      if(!canvas || !legend || !subtitle || !empty){
+        return;
+      }
+      if(!STATE.res){
+        card.style.display = 'none';
+        STATE.trendCache = null;
+        hideTrendTooltip();
+        return;
+      }
+      card.style.display = 'block';
+      hideTrendTooltip();
+
+      if(key === 'all'){
+        const points = STATE.trendAll || [];
+        if(!points.length){
+          canvas.style.display = 'none';
+          empty.style.display = 'block';
+          empty.textContent = STATE.res.arrivalCol
+            ? '缺少可按批次区分的记录，无法生成整体趋势。'
+            : '缺少“目的国航班到达”列，无法生成批次趋势。';
+          legend.innerHTML = '';
+          subtitle.textContent = '全部批次 · 无法绘制趋势';
+          STATE.trendCache = null;
+          return;
+        }
+        canvas.style.display = 'block';
+        empty.style.display = 'none';
+        subtitle.textContent = '全部批次 · 按批次时间对比签收率与未签收问题件率';
+        legend.innerHTML = `
+          <span class="legend-item"><span class="legend-dot" style="background:${getCssVar('--accent')}"></span>签收率</span>
+          <span class="legend-item"><span class="legend-dot" style="background:${getCssVar('--accent2')}"></span>未签收问题件率</span>
+        `;
+        drawAllTrend(points);
+        return;
+      }
+
+      const target = STATE.batchMap.get(key);
+      if(!target){
+        canvas.style.display = 'none';
+        empty.style.display = 'block';
+        empty.textContent = '未找到该批次的指标数据。';
+        legend.innerHTML = '';
+        subtitle.textContent = '批次趋势';
+        STATE.trendCache = null;
+        return;
+      }
+
+      subtitle.textContent = `${target.label} · 按签收日期展示每日签收量`;
+      if(!STATE.signedTimeCol){
+        canvas.style.display = 'none';
+        empty.style.display = 'block';
+        empty.textContent = '缺少签收时间列，无法绘制日度趋势。';
+        legend.innerHTML = '';
+        STATE.trendCache = null;
+        return;
+      }
+      const daily = target.metrics?.dailySigned || [];
+      if(!daily.length){
+        canvas.style.display = 'none';
+        empty.style.display = 'block';
+        empty.textContent = '该批次尚无可用的签收日期数据。';
+        legend.innerHTML = '';
+        STATE.trendCache = null;
+        return;
+      }
+      canvas.style.display = 'block';
+      empty.style.display = 'none';
+      legend.innerHTML = `<span class="legend-item"><span class="legend-dot" style="background:${getCssVar('--accent')}"></span>每日签收票数</span>`;
+      drawDailyTrend(daily);
+    }
+
+    function drawAllTrend(points){
+      const canvas = $('#trend_canvas');
+      const prepared = prepareTrendCanvas(canvas);
+      if(!prepared) return;
+      const {ctx, width, height} = prepared;
+      const padding = {left:70, right:16, top:28, bottom:66};
+      const chartW = Math.max(1, width - padding.left - padding.right);
+      const chartH = Math.max(1, height - padding.top - padding.bottom);
+      const step = points.length > 1 ? chartW / (points.length - 1) : 0;
+      const colorSigned = getCssVar('--accent') || '#22d3ee';
+      const colorProblem = getCssVar('--accent2') || '#a78bfa';
+      const basePoints = points.map((item, idx)=>{
+        const signedPct = item.signedRate != null ? item.signedRate * 100 : null;
+        const problemPct = item.problemRate != null ? item.problemRate * 100 : null;
+        const x = padding.left + (points.length > 1 ? step * idx : chartW / 2);
+        const signedY = signedPct != null
+          ? padding.top + chartH - (Math.min(100, Math.max(0, signedPct)) / 100) * chartH
+          : null;
+        const problemY = problemPct != null
+          ? padding.top + chartH - (Math.min(100, Math.max(0, problemPct)) / 100) * chartH
+          : null;
+        return {
+          key: item.key,
+          label: item.label || '',
+          x,
+          signedPct,
+          problemPct,
+          problemUnsigned: item.problemUnsigned ?? null,
+          total: item.total ?? null,
+          signedY,
+          problemY
+        };
+      });
+      drawPercentageGrid(ctx, width, height, padding);
+      const signedSeries = basePoints.map(pt=>({x:pt.x, y:pt.signedY, value:pt.signedPct}));
+      const problemSeries = basePoints.map(pt=>({x:pt.x, y:pt.problemY, value:pt.problemPct}));
+      drawSeries(ctx, signedSeries, colorSigned);
+      drawSeries(ctx, problemSeries, colorProblem);
+      drawXAxisLabels(ctx, basePoints, padding, chartH, pt=>pt.label);
+      STATE.trendCache = {mode:'all', basePoints};
+    }
+
+    function drawDailyTrend(daily){
+      const canvas = $('#trend_canvas');
+      const prepared = prepareTrendCanvas(canvas);
+      if(!prepared) return;
+      const {ctx, width, height} = prepared;
+      const padding = {left:70, right:20, top:28, bottom:66};
+      const chartW = Math.max(1, width - padding.left - padding.right);
+      const chartH = Math.max(1, height - padding.top - padding.bottom);
+      const step = daily.length > 1 ? chartW / (daily.length - 1) : 0;
+      const colorSigned = getCssVar('--accent') || '#22d3ee';
+      const maxCount = daily.reduce((acc, cur)=> Math.max(acc, cur.count || 0), 0);
+      const yMax = Math.max(1, niceMaxValue(maxCount));
+      const weekMap = ['日','一','二','三','四','五','六'];
+      const basePoints = daily.map((item, idx)=>{
+        const value = Number(item.count) || 0;
+        const x = padding.left + (daily.length > 1 ? step * idx : chartW / 2);
+        const ratio = value / yMax;
+        const y = padding.top + chartH - Math.min(1, Math.max(0, ratio)) * chartH;
+        const dt = item.date ? new Date(item.date) : null;
+        const validDate = dt && !Number.isNaN(dt.getTime());
+        const weekLabel = validDate ? `周${weekMap[dt.getDay()]}` : '';
+        const displayLabel = validDate
+          ? `${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}(${weekLabel})`
+          : item.date;
+        return {
+          key: item.date,
+          label: item.date || '',
+          x,
+          y,
+          value,
+          displayLabel,
+          weekLabel
+        };
+      });
+      drawValueGrid(ctx, width, height, padding, yMax);
+      const series = basePoints.map(pt=>({x:pt.x, y:pt.y, value:pt.value}));
+      drawSeries(ctx, series, colorSigned);
+      drawXAxisLabels(ctx, basePoints, padding, chartH, pt=>pt.displayLabel);
+      STATE.trendCache = {mode:'daily', basePoints, yMax};
+    }
+
+    function prepareTrendCanvas(canvas){
+      if(!canvas) return null;
+      const ratio = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(320, rect.width || canvas.width || 640);
+      const height = Math.max(200, rect.height || canvas.height || 280);
+      canvas.width = width * ratio;
+      canvas.height = height * ratio;
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.font = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
+      return {ctx, width, height};
+    }
+
+    function drawPercentageGrid(ctx, width, height, padding){
+      const chartW = width - padding.left - padding.right;
+      const chartH = height - padding.top - padding.bottom;
+      const ticks = [0,20,40,60,80,100];
+      ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+      ctx.lineWidth = 1;
+      ticks.forEach(pct=>{
+        const y = padding.top + chartH - (pct/100) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+      });
+      ctx.strokeStyle = '#1f2b3e';
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, padding.top + chartH);
+      ctx.lineTo(width - padding.right, padding.top + chartH);
+      ctx.stroke();
+      ctx.fillStyle = '#8da2bf';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ticks.forEach(pct=>{
+        const y = padding.top + chartH - (pct/100) * chartH;
+        ctx.fillText(`${pct}%`, padding.left - 12, y);
+      });
+    }
+
+    function drawValueGrid(ctx, width, height, padding, maxValue){
+      const chartW = width - padding.left - padding.right;
+      const chartH = height - padding.top - padding.bottom;
+      const steps = 5;
+      const tickValues = [];
+      for(let i=0;i<=steps;i++){
+        tickValues.push(Math.round(maxValue * i / steps));
+      }
+      ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+      ctx.lineWidth = 1;
+      tickValues.forEach(val=>{
+        const ratio = maxValue ? val / maxValue : 0;
+        const y = padding.top + chartH - Math.min(1, Math.max(0, ratio)) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+      });
+      ctx.strokeStyle = '#1f2b3e';
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, padding.top + chartH);
+      ctx.lineTo(width - padding.right, padding.top + chartH);
+      ctx.stroke();
+      ctx.fillStyle = '#8da2bf';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      tickValues.forEach(val=>{
+        const ratio = maxValue ? val / maxValue : 0;
+        const y = padding.top + chartH - Math.min(1, Math.max(0, ratio)) * chartH;
+        ctx.fillText(String(val), padding.left - 12, y);
+      });
+    }
+
+    function drawSeries(ctx, series, color){
+      const segments = [];
+      let current = [];
+      series.forEach(pt=>{
+        if(pt.y == null || Number.isNaN(pt.y)){
+          if(current.length){
+            segments.push(current);
+            current = [];
+          }
+          return;
+        }
+        current.push(pt);
+      });
+      if(current.length) segments.push(current);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      segments.forEach(seg=>{
+        if(!seg.length) return;
+        ctx.beginPath();
+        ctx.moveTo(seg[0].x, seg[0].y);
+        for(let i=1;i<seg.length;i++){
+          ctx.lineTo(seg[i].x, seg[i].y);
+        }
+        ctx.stroke();
+      });
+      ctx.fillStyle = color;
+      series.forEach(pt=>{
+        if(pt.y == null || Number.isNaN(pt.y)) return;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI*2);
+        ctx.fill();
+      });
+    }
+
+    function drawXAxisLabels(ctx, basePoints, padding, chartH, labelSelector){
+      const count = basePoints.length;
+      if(!count) return;
+      const step = count > 12 ? Math.ceil(count / 12) : 1;
+      const bottom = padding.top + chartH;
+      basePoints.forEach((pt, idx)=>{
+        if(count > 1 && idx % step !== 0 && idx !== count - 1) return;
+        const label = labelSelector(pt, idx);
+        if(!label) return;
+        ctx.save();
+        ctx.translate(pt.x, bottom + 6);
+        ctx.rotate(-Math.PI / 4);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(label, 0, 0);
+        ctx.restore();
+      });
+    }
+
+    function niceMaxValue(value){
+      if(!value || value <= 0) return 1;
+      const exp = Math.floor(Math.log10(value));
+      const base = Math.pow(10, exp);
+      const scaled = value / base;
+      let nice;
+      if(scaled <= 1) nice = 1;
+      else if(scaled <= 2) nice = 2;
+      else if(scaled <= 5) nice = 5;
+      else nice = 10;
+      return nice * base;
+    }
+
+    function hideTrendTooltip(){
+      const tt = $('#trend_tooltip');
+      if(tt){
+        tt.classList.remove('show');
+      }
+    }
+
+    function showTrendTooltip(html, x, y){
+      const tt = $('#trend_tooltip');
+      if(!tt) return;
+      tt.innerHTML = html;
+      tt.style.left = `${x}px`;
+      tt.style.top = `${y}px`;
+      tt.classList.add('show');
+      const wrap = tt.parentElement;
+      if(wrap){
+        const wrapWidth = wrap.clientWidth;
+        const wrapHeight = wrap.clientHeight;
+        const width = tt.offsetWidth;
+        const height = tt.offsetHeight;
+        const clampedX = Math.max(8, Math.min(x, wrapWidth - width - 8));
+        const clampedY = Math.max(8, Math.min(y, wrapHeight - height - 8));
+        tt.style.left = `${clampedX}px`;
+        tt.style.top = `${clampedY}px`;
+      }
+    }
+
+    function buildTrendTooltip(mode, point){
+      if(mode === 'all'){
+        const colorSigned = getCssVar('--accent') || '#22d3ee';
+        const colorProblem = getCssVar('--accent2') || '#a78bfa';
+        const signedText = point.signedPct != null ? `${point.signedPct.toFixed(2)}%` : '缺少签收率';
+        const problemText = point.problemPct != null ? `${point.problemPct.toFixed(2)}%` : '缺少问题件率';
+        const detail = (point.problemUnsigned != null && point.total != null)
+          ? `<div>未签收问题件：${point.problemUnsigned} / 总票数：${point.total}</div>`
+          : '';
+        return `<div><b>${escapeHtml(point.label)}</b></div>` +
+          `<div style="color:${colorSigned}">签收率：${signedText}</div>` +
+          `<div style="color:${colorProblem}">未签收问题件率：${problemText}</div>` +
+          detail;
+      }
+      const colorSigned = getCssVar('--accent') || '#22d3ee';
+      const week = point.weekLabel ? ` · ${point.weekLabel}` : '';
+      return `<div><b>${escapeHtml(point.label)}</b>${escapeHtml(week)}</div>` +
+        `<div style="color:${colorSigned}">签收票数：${point.value}</div>`;
+    }
+
+    function handleTrendHover(evt){
+      if(!STATE.trendCache || !STATE.trendCache.basePoints || !STATE.trendCache.basePoints.length){
+        hideTrendTooltip();
+        return;
+      }
+      const canvas = evt.currentTarget;
+      const canvasRect = canvas.getBoundingClientRect();
+      const wrapRect = canvas.parentElement.getBoundingClientRect();
+      const x = evt.clientX - canvasRect.left;
+      const y = evt.clientY - canvasRect.top;
+      let nearest = null;
+      STATE.trendCache.basePoints.forEach(pt=>{
+        if(STATE.trendCache.mode === 'all'){
+          if(pt.signedY != null){
+            const dist = Math.hypot(pt.x - x, pt.signedY - y);
+            if(!nearest || dist < nearest.dist){
+              nearest = {dist, point:pt, anchorX:pt.x, anchorY:pt.signedY};
+            }
+          }
+          if(pt.problemY != null){
+            const dist = Math.hypot(pt.x - x, pt.problemY - y);
+            if(!nearest || dist < nearest.dist){
+              nearest = {dist, point:pt, anchorX:pt.x, anchorY:pt.problemY};
+            }
+          }
+        } else if(STATE.trendCache.mode === 'daily'){
+          if(pt.y != null){
+            const dist = Math.hypot(pt.x - x, pt.y - y);
+            if(!nearest || dist < nearest.dist){
+              nearest = {dist, point:pt, anchorX:pt.x, anchorY:pt.y};
+            }
+          }
+        }
+      });
+      if(!nearest || nearest.dist > 28){
+        hideTrendTooltip();
+        return;
+      }
+      const offsetX = canvasRect.left - wrapRect.left + nearest.anchorX + 12;
+      const offsetY = canvasRect.top - wrapRect.top + nearest.anchorY - 12;
+      showTrendTooltip(buildTrendTooltip(STATE.trendCache.mode, nearest.point), offsetX, offsetY);
+    }
+
+    const trendCanvasEl = document.getElementById('trend_canvas');
+    if(trendCanvasEl){
+      trendCanvasEl.addEventListener('mousemove', handleTrendHover);
+      trendCanvasEl.addEventListener('mouseleave', ()=> hideTrendTooltip());
+    }
+
+    window.addEventListener('resize', ()=>{
+      if(STATE.res){
+        renderTrendForKey(STATE.currentKey);
+      }
+    });
 
     // —— 可交互甜甜圈（SVG） ——
     const palette = ['#22d3ee','#a78bfa','#22c55e','#f59e0b','#ef4444','#38bdf8','#f472b6','#84cc16','#eab308','#f97316'];
