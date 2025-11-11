@@ -29,6 +29,13 @@
     .btn:hover{background:#1a2941}
     .btn.primary{background:linear-gradient(90deg,#22d3ee,#a78bfa); color:#00111a}
     .btn.primary:hover{filter:brightness(1.08)}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:10px}
+
+    .batch-bar{display:none;margin-top:16px;margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap}
+    .batch-btn{appearance:none;border:1px solid #1f2b3e;border-radius:999px;padding:6px 14px;background:#0f1722;color:#cbd5f5;
+      cursor:pointer;font-size:13px;font-weight:700;transition:.12s all}
+    .batch-btn:hover{border-color:#2dd4bf;color:#2dd4bf}
+    .batch-btn.active{background:linear-gradient(90deg,#22d3ee,#a78bfa);color:#00111a;border-color:transparent;box-shadow:var(--ring)}
 
     .grid{display:grid;gap:12px;grid-template-columns:repeat(4,1fr);margin-top:14px}
     @media (max-width:1024px){.grid{grid-template-columns:repeat(2,1fr)}}
@@ -37,8 +44,22 @@
     .card{border-radius:16px;background:linear-gradient(180deg,#101827,#0b111a);padding:14px;box-shadow:var(--ring)}
     .kpi .label{color:var(--muted);font-size:12px}
     .kpi .num{font-size:clamp(22px,5vw,28px);font-weight:900;margin-top:6px}
+    .kpi .detail{font-size:medium;color:#94a3b8;margin-top:6px;line-height:1.4}
+    .card.danger .num{color:var(--danger)}
 
     .split{display:grid;grid-template-columns:1fr; gap:12px; margin-top:12px}
+    .trend-card{margin-top:12px}
+    .trend-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .trend-head h3{margin:0;font-size:16px}
+    .trend-sub{color:var(--muted);font-size:12px}
+    .trend-canvas-wrap{position:relative}
+    #trend_canvas{width:100%;height:280px;display:block}
+    .trend-empty{display:none;text-align:center;color:var(--muted);padding:36px 0}
+    .trend-legend{display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--muted);flex-wrap:wrap;align-items:center}
+    .legend-item{display:flex;align-items:center;gap:6px}
+    .legend-dot{width:10px;height:10px;border-radius:999px;background:#22d3ee;display:inline-block}
+    .trend-tooltip{position:absolute;top:12px;left:12px;padding:8px 10px;border-radius:10px;background:#0b1422;border:1px solid #1f2b3e;box-shadow:var(--ring);color:var(--ink);font-size:12px;pointer-events:none;opacity:0;transition:.12s}
+    .trend-tooltip.show{opacity:1}
 
     table{width:100%;border-collapse:collapse;font-size:13px}
     th,td{padding:9px 10px;border-bottom:1px solid #1f2b3e}
@@ -74,7 +95,7 @@
     <div id="uploader" class="uploader">
       <div>
         <div style="font-weight:800;font-size:14px">把文件拖进来，或点击右侧按钮选择文件</div>
-        <div class="hint">自动选取数据最多的工作表，输出：总票数（有单号）/ 已签收 / 问题件（派送中+网点到件）/ 正常派送中（无问题标记）。</div>
+        <div class="hint">自动选取数据最多的工作表，输出：总票数（有单号）/ 已签收 / 问题件（未签收）/ 正常派送中（无问题标记）。</div>
       </div>
       <div>
         <input id="file" type="file" accept=".xlsx,.xls" style="display:none" />
@@ -82,11 +103,27 @@
       </div>
     </div>
 
+    <div id="batch_bar" class="batch-bar"></div>
+    <div id="trend_card" class="card trend-card" style="display:none">
+      <div class="trend-head">
+        <h3>签收趋势概览</h3>
+        <div id="trend_subtitle" class="trend-sub"></div>
+      </div>
+      <div class="trend-canvas-wrap">
+        <canvas id="trend_canvas"></canvas>
+        <div id="trend_tooltip" class="trend-tooltip"></div>
+      </div>
+      <div id="trend_empty" class="trend-empty">暂无可绘制的数据</div>
+      <div id="trend_legend" class="trend-legend"></div>
+    </div>
     <section id="kpis" class="grid" style="display:none">
       <div class="card kpi"><div class="label">总票数（仅统计有快递单号）</div><div id="k_total" class="num">-</div></div>
       <div class="card kpi"><div class="label">已签收</div><div id="k_signed" class="num">-</div></div>
-      <div class="card kpi"><div class="label">问题件（派送/网点到件）</div><div id="k_problem" class="num">-</div></div>
+      <div class="card kpi"><div class="label">问题件（未签收）</div><div id="k_problem" class="num">-</div><div id="k_problem_detail" class="detail">-</div></div>
       <div class="card kpi"><div class="label">正常派送中（无问题标记）</div><div id="k_normal" class="num">-</div></div>
+      <div class="card kpi"><div class="label">签收率</div><div id="k_signed_rate" class="num">-</div></div>
+      <div class="card kpi"><div class="label">问题件率</div><div id="k_problem_rate" class="num">-</div></div>
+      <div class="card kpi" id="card_transfer"><div class="label">卡转时效（目的国航班到达 → 清关完成）</div><div id="k_transfer">-</div><div id="k_transfer_detail" class="detail">-</div></div>
     </section>
 
     <div class="split" id="analytics" style="display:none">
@@ -102,7 +139,7 @@
           </div>
           <div style="min-width:240px;overflow:auto">
             <table>
-              <thead><tr><th>问题类型</th><th style="width:120px">数量</th><th style="width:120px">占比</th></tr></thead>
+              <thead><tr><th>问题类型</th><th style="width:120px">第一次登记数量</th><th style="width:120px">第二次登记数量</th><th style="width:120px">占比</th><th style="width:130px">导出单号</th></tr></thead>
               <tbody id="issue_tbody"></tbody>
             </table>
           </div>
@@ -131,17 +168,147 @@
     // —— 关键词配置 ——
     const ID_KEYS = ["单号","订单号","运单","Waybill","AWB","Tracking","快递单号","跟踪","运单号","条码","包裹号"];
     const STATUS_KEYS = ["最新状态","订单状态","状态","当前状态","物流状态"];
-    const PROB1_KEYS = ["问题件类型","问题件类型名称"]; // 只看这两类
-    const PROB2_KEYS = ["异常件类型","异常件类型名称"]; // 只看这两类
+    const PROB1_KEYS = [
+      "第一次登记问题件类型",
+      "问题件第一次登记类型",
+      "问题件类型",
+      "问题件类型名称"
+    ]; // 只看这两类
+    const PROB2_KEYS = [
+      "第二次问题件登记类型",
+      "问题件第二次登记类型",
+      "二次问题件类型",
+      "异常件类型",
+      "异常件类型名称"
+    ]; // 只看这两类
+    const SIGNED_TIME_KEYS = [
+      "签收时间",
+      "签收日期",
+      "Signed Time",
+      "签收时间（当地）",
+      "签收时间(当地)",
+      "签收时间-当地",
+      "签收时间-本地",
+      "签收时间（本地）",
+      "签收完成时间"
+    ];
+    const PROB1_TIME_KEYS = [
+      "问题件登记时间",
+      "第一次问题件登记时间",
+      "问题件第一次登记时间",
+      "首次问题件登记时间",
+      "问题件登记时间1"
+    ];
+    const PROB2_TIME_KEYS = [
+      "第二次问题件登记时间",
+      "异常件登记时间",
+      "问题件第二次登记时间",
+      "二次问题件登记时间",
+      "异常件登记时间2"
+    ];
+    const ARRIVAL_KEYS = ["目的国航班到达"];
+    const CLEAR_KEYS = ["清关完成"];
 
     const SIGNED_PAT = /(签收|已签收|成功签收|Delivered)/i;
     const DELIVERY_PAT = /(派件中|派送中|网点到件|Out\\s*for|正在派送|到达派件网点)/i;
 
     const ph = s => (s==null?"":String(s).trim());
-    const isValidId = v => !!(v && /[A-Za-z0-9]/.test(v) && String(v).length >= 6);
+    const normalizeAlias = v => ph(v).toLowerCase().replace(/[\s_\-]/g, '');
+    const ID_HEADER_ALIASES = new Set([
+      'waybill','waybillno','waybillnumber','webellnumber','awb','trackingnumber','tracking',
+      '运单','运单号','快递单号','单号','订单号','包裹号','跟踪'
+    ]);
+    const isHeaderAlias = v => ID_HEADER_ALIASES.has(normalizeAlias(v));
+    const isValidId = v => {
+      const s = ph(v);
+      if(!s) return false;
+      if(s.length < 6) return false;
+      if(!/\d/.test(s)) return false;
+      if(isHeaderAlias(s)) return false;
+      return true;
+    };
 
-    const pickCol = (cols, keys) => cols.find(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
+    const pickCol = (cols, keys) => {
+      for(const key of keys){
+        const match = cols.find(c => c.toLowerCase().includes(key.toLowerCase()));
+        if(match) return match;
+      }
+      return undefined;
+    };
     const pickColsAny = (cols, keys) => cols.filter(c => keys.some(k => c.toLowerCase().includes(k.toLowerCase())));
+
+    const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30));
+
+    function parseDateTime(v){
+      if(v instanceof Date && !Number.isNaN(v.getTime())) return v;
+      if(typeof v === 'number' && !Number.isNaN(v)){
+        return new Date(EXCEL_EPOCH.getTime() + v * 86400000);
+      }
+      const str = ph(v);
+      if(!str) return null;
+      const num = Number(str);
+      if(!Number.isNaN(num)){
+        return new Date(EXCEL_EPOCH.getTime() + num * 86400000);
+      }
+      const norm = str
+        .replace(/年|\//g, '-')
+        .replace(/月/g, '-')
+        .replace(/日/g, '')
+        .replace(/\./g, '-')
+        .replace(/T/, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const direct = new Date(norm);
+      if(!Number.isNaN(direct.getTime())) return direct;
+      const m = norm.match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})(?::(\d{1,2})(?::(\d{1,2}))?)?)?/);
+      if(m){
+        return new Date(
+          Number(m[1]),
+          Number(m[2]) - 1,
+          Number(m[3]),
+          Number(m[4] || 0),
+          Number(m[5] || 0),
+          Number(m[6] || 0)
+        );
+      }
+      return null;
+    }
+
+    const pad2 = n => String(n).padStart(2, '0');
+    const formatDateOnly = dt => {
+      if(!dt || Number.isNaN(dt.getTime())) return '';
+      return `${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}`;
+    };
+
+    const formatDate = dt => {
+      if(!dt || Number.isNaN(dt.getTime())) return '';
+      return `${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())} ${pad2(dt.getHours())}:${pad2(dt.getMinutes())}:${pad2(dt.getSeconds())}`;
+    };
+
+    function formatDuration(ms){
+      if(ms == null || ms < 0) return {text:'-', daysDecimal:null};
+      const totalMinutes = Math.floor(ms / 60000);
+      const days = Math.floor(totalMinutes / (24 * 60));
+      const hours = Math.floor((totalMinutes - days * 24 * 60) / 60);
+      const minutes = totalMinutes % 60;
+      const parts = [];
+      if(days) parts.push(`${days}天`);
+      if(hours) parts.push(`${hours}小时`);
+      if(minutes || parts.length===0) parts.push(`${minutes}分钟`);
+      const daysVal = ms / 86400000;
+      return {
+        text: parts.join(' '),
+        daysDecimal: Number(daysVal.toFixed(2)),
+        daysFormatted: daysVal.toFixed(2)
+      };
+    }
+
+    function formatPercent(v){
+      if(v==null || Number.isNaN(v)) return '-';
+      return (v*100).toFixed(2) + '%';
+    }
+
+    const getCssVar = name => getComputedStyle(document.body).getPropertyValue(name).trim() || name;
 
     function sheetToJSONPickBiggest(wb){
       let maxLen=0, pick=null, data=null;
@@ -156,73 +323,310 @@
     function compute(rows){
       if(!rows.length) throw new Error('表格为空');
       const cols = Object.keys(rows[0]);
-
       // 识别列
       const idCols = pickColsAny(cols, ID_KEYS);
       const statusCol = pickCol(cols, STATUS_KEYS);
       const prob1Col = pickCol(cols, PROB1_KEYS);
       const prob2Col = pickCol(cols, PROB2_KEYS);
+      const signedTimeCol = pickCol(cols, SIGNED_TIME_KEYS);
+      const prob1TimeCol = pickCol(cols, PROB1_TIME_KEYS);
+      const prob2TimeCol = pickCol(cols, PROB2_TIME_KEYS);
+      const arrivalCol = pickCol(cols, ARRIVAL_KEYS);
+      const clearCol = pickCol(cols, CLEAR_KEYS);
+
+      const normalizedColSet = new Set(cols.map(normalizeAlias));
+
+      const cleanedRows = rows.filter(r => {
+        const values = cols.map(c => ph(r[c])).filter(Boolean);
+        if(values.length){
+          const rowSet = new Set(values.map(normalizeAlias));
+          if(rowSet.size === normalizedColSet.size && [...rowSet].every(v => normalizedColSet.has(v))){
+            return false;
+          }
+        }
+        if(idCols.length){
+          const idValues = idCols.map(c => ph(r[c])).filter(Boolean);
+          if(idValues.length && idValues.every(isHeaderAlias)){
+            return false;
+          }
+        }
+        return true;
+      });
 
       // 仅统计有快递单号
-      const scoped = rows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
+      const scoped = cleanedRows.filter(r => idCols.some(c => isValidId(ph(r[c]))));
 
-      // 状态拆分
-      const signed = scoped.filter(r => statusCol && SIGNED_PAT.test(ph(r[statusCol])));
-      const deliverSet = scoped.filter(r => statusCol && DELIVERY_PAT.test(ph(r[statusCol])));
-
-      // 问题标记（只看两列）
       const probFlag = r => !!( (prob1Col && ph(r[prob1Col])) || (prob2Col && ph(r[prob2Col])) );
-      const problems = deliverSet.filter(probFlag);
-      const normalDeliv = deliverSet.filter(r => !probFlag(r));
+      const pickPrimaryId = r => {
+        for(const col of idCols){
+          const val = ph(r[col]);
+          if(isValidId(val)) return val;
+        }
+        return '';
+      };
 
-      // 问题类型占比（派送+网点到件）
-      const mergeIssue = r => ph(r[prob1Col]) || ph(r[prob2Col]) || '未标注';
-      const issueMap = new Map();
-      problems.forEach(r=>{
-        const key = mergeIssue(r);
-        issueMap.set(key, (issueMap.get(key)||0)+1);
-      });
-      const issueList = Array.from(issueMap.entries()).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({type:k,count:v}));
+      const formatTimeValue = (col, row) => {
+        if(!col) return '';
+        const raw = row[col];
+        const parsed = parseDateTime(raw);
+        return parsed ? formatDate(parsed) : ph(raw);
+      };
+
+      const buildMetrics = source => {
+        const signed = statusCol ? source.filter(r => SIGNED_PAT.test(ph(r[statusCol]))) : [];
+        const deliverSet = statusCol ? source.filter(r => DELIVERY_PAT.test(ph(r[statusCol]))) : [];
+        const normalDeliv = deliverSet.filter(r => !probFlag(r));
+
+        let unsignedProblemCount = 0;
+        let unsignedSecondCount = 0;
+
+        const issueMap = new Map();
+
+        const ensureBucket = type => {
+          const key = type || '未标注';
+          if(!issueMap.has(key)){
+            issueMap.set(key, {type:key, entries:new Map()});
+          }
+          return issueMap.get(key);
+        };
+
+        const dailySignedMap = new Map();
+
+        source.forEach((r, idx)=>{
+          const statusVal = statusCol ? ph(r[statusCol]) : '';
+          const isSigned = statusCol ? SIGNED_PAT.test(statusVal) : false;
+          const firstType = prob1Col ? ph(r[prob1Col]) : '';
+          const secondType = prob2Col ? ph(r[prob2Col]) : '';
+          const firstTimeStr = formatTimeValue(prob1TimeCol, r);
+          const secondTimeStr = formatTimeValue(prob2TimeCol, r);
+          const id = pickPrimaryId(r);
+          const rowKey = `${idx}_${id || ''}`;
+
+          if(isSigned && signedTimeCol){
+            const signedDate = parseDateTime(r[signedTimeCol]);
+            if(signedDate && !Number.isNaN(signedDate.getTime())){
+              const dateKey = formatDateOnly(signedDate);
+              if(dateKey){
+                const bucket = dailySignedMap.get(dateKey) || {date:dateKey,count:0};
+                bucket.count += 1;
+                dailySignedMap.set(dateKey, bucket);
+              }
+            }
+          }
+
+          if(!isSigned && (firstType || secondType)){
+            unsignedProblemCount += 1;
+            if(secondType) unsignedSecondCount += 1;
+
+            if(firstType){
+              const bucket = ensureBucket(firstType);
+              const entryMap = bucket.entries;
+              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, firstTime:'', secondTime:''};
+              existing.first = true;
+              if(firstTimeStr) existing.firstTime = firstTimeStr;
+              if(firstType === secondType && secondType){
+                existing.second = true;
+                if(secondTimeStr) existing.secondTime = secondTimeStr;
+              }
+              entryMap.set(rowKey, existing);
+            }
+
+            if(secondType && secondType !== firstType){
+              const bucket = ensureBucket(secondType);
+              const entryMap = bucket.entries;
+              const existing = entryMap.get(rowKey) || {id: id || '（缺少单号）', first:false, second:false, firstTime:'', secondTime:''};
+              existing.second = true;
+              if(secondTimeStr) existing.secondTime = secondTimeStr;
+              if(firstTimeStr) existing.firstTime = firstTimeStr;
+              entryMap.set(rowKey, existing);
+            }
+          }
+        });
+
+        const issueList = Array.from(issueMap.values()).map(bucket => {
+          const entries = Array.from(bucket.entries.values());
+          const firstCount = entries.filter(e=>e.first).length;
+          const secondCount = entries.filter(e=>e.second).length;
+          const totalCount = firstCount + secondCount;
+          return {
+            type: bucket.type,
+            firstCount,
+            secondCount,
+            totalCount,
+            entries
+          };
+        }).filter(item => item.totalCount > 0)
+          .sort((a,b)=>b.totalCount - a.totalCount);
+
+        const dailySigned = Array.from(dailySignedMap.values())
+          .sort((a,b)=>a.date.localeCompare(b.date));
+
+        const arrivals = [];
+        const transferPairs = [];
+        let arrivalCount = 0;
+        let missingClearCount = 0;
+        source.forEach(r=>{
+          const a = arrivalCol ? parseDateTime(r[arrivalCol]) : null;
+          const c = clearCol ? parseDateTime(r[clearCol]) : null;
+          const aValid = a && !Number.isNaN(a.getTime());
+          const cValid = c && !Number.isNaN(c.getTime());
+          if(aValid){
+            arrivals.push(a);
+            arrivalCount += 1;
+          }
+          if(aValid && cValid && c >= a){
+            transferPairs.push({arrival:a, clear:c});
+          } else if(aValid && !cValid){
+            missingClearCount += 1;
+          }
+        });
+        const earliestArrival = arrivals.length ? new Date(Math.min(...arrivals.map(d=>d.getTime()))) : null;
+        const earliestClear = transferPairs.length ? new Date(Math.min(...transferPairs.map(p=>p.clear.getTime()))) : null;
+        const normalMs = (earliestArrival && earliestClear && earliestClear >= earliestArrival)
+          ? (earliestClear - earliestArrival)
+          : null;
+        const over5 = transferPairs.filter(p=> (p.clear - p.arrival) / 86400000 > 5).length;
+        const sample = transferPairs.length;
+        const latestPair = transferPairs.reduce((acc, pair)=>{
+          const span = pair.clear - pair.arrival;
+          if(span < 0) return acc;
+          if(!acc || span > acc.span){
+            return {span, arrival: pair.arrival, clear: pair.clear};
+          }
+          return acc;
+        }, null);
+        let transferStatus = 'no_data';
+        let transferMs = null;
+        let transferNow = null;
+        if(arrivalCount){
+          if(sample){
+            transferStatus = missingClearCount ? 'partial_missing' : 'normal';
+            transferMs = normalMs;
+          } else if(missingClearCount === arrivalCount){
+            transferStatus = 'in_transit';
+            transferNow = new Date();
+            transferMs = earliestArrival ? (transferNow - earliestArrival) : null;
+          } else {
+            transferStatus = 'partial_missing';
+            transferMs = normalMs;
+          }
+        }
+
+        return {
+          total: source.length,
+          signed: signed.length,
+          problem: unsignedProblemCount,
+          normal: normalDeliv.length,
+          issues: issueList,
+          issueBase: issueList.reduce((acc, cur)=>acc + cur.totalCount, 0),
+          problemUnsigned: unsignedProblemCount,
+          problemSecondUnsigned: unsignedSecondCount,
+          signedRate: source.length ? signed.length / source.length : null,
+          problemRateValue: source.length ? unsignedProblemCount / source.length : null,
+          deliverBase: deliverSet.length,
+          dailySigned,
+          transfer: {
+            earliestArrival,
+            earliestClear,
+            ms: transferMs,
+            now: transferNow,
+            status: transferStatus,
+            sample,
+            over5,
+            over5Rate: sample ? over5 / sample : 0,
+            missingClearCount,
+            arrivalCount,
+            latestMs: latestPair ? latestPair.span : null,
+            latestArrival: latestPair ? latestPair.arrival : null,
+            latestClear: latestPair ? latestPair.clear : null
+          }
+        };
+      };
+
+      const summary = buildMetrics(scoped);
+
+      const batchMap = new Map();
+      const missingBatch = [];
+      if(arrivalCol){
+        scoped.forEach(r=>{
+          const dt = parseDateTime(r[arrivalCol]);
+          if(dt && !Number.isNaN(dt.getTime())){
+            const key = formatDateOnly(dt);
+            if(!batchMap.has(key)) batchMap.set(key, []);
+            batchMap.get(key).push(r);
+          } else {
+            missingBatch.push(r);
+          }
+        });
+      }
+
+      const batches = Array.from(batchMap.entries())
+        .sort((a,b)=>a[0].localeCompare(b[0]))
+        .map(([key, list])=>({
+          key,
+          label:key,
+          metrics: buildMetrics(list),
+          size:list.length
+        }));
+
+      const trendAll = batches.map(item=>({
+        key: item.key,
+        label: item.label,
+        signedRate: item.metrics?.signedRate ?? null,
+        problemRate: item.metrics?.problemRateValue ?? null,
+        problemUnsigned: item.metrics?.problemUnsigned ?? null,
+        total: item.metrics?.total ?? null
+      }));
+
+      const ungrouped = missingBatch.length ? {
+        key:'__missing__',
+        label:'未识别日期',
+        metrics: buildMetrics(missingBatch),
+        size: missingBatch.length
+      } : null;
 
       return {
         cols, idCols, statusCol, prob1Col, prob2Col,
-        total: scoped.length,
-        signed: signed.length,
-        problem: problems.length,
-        normal: normalDeliv.length,
-        issues: issueList,
-        issueBase: problems.length,
+        signedTimeCol,
+        prob1TimeCol,
+        prob2TimeCol,
+        arrivalCol,
+        clearCol,
+        summary,
+        batches,
+        ungrouped,
+        trendAll
       };
     }
 
+    const STATE = {
+      res:null,
+      batchMap:new Map(),
+      currentKey:'all',
+      currentLabel:'全部',
+      currentMetrics:null,
+      trendAll:[],
+      trendCache:null,
+      signedTimeCol:null
+    };
+
     function render(res){
+      STATE.res = res;
+      STATE.batchMap = new Map();
+      STATE.batchMap.set('all', {label:'全部', metrics: res.summary});
+      STATE.currentKey = 'all';
+      STATE.currentLabel = '全部';
+      STATE.currentMetrics = res.summary;
+      STATE.trendAll = res.trendAll || [];
+      STATE.signedTimeCol = res.signedTimeCol || null;
+      STATE.trendCache = null;
+
+      buildBatchBar(res);
       $('#kpis').style.display='grid';
       $('#analytics').style.display='grid';
       $('#audit').style.display='block';
 
-      $('#k_total').textContent = res.total;
-      $('#k_signed').textContent = res.signed;
-      $('#k_problem').textContent = res.problem;
-      $('#k_normal').textContent = res.normal;
-
-      // 表格渲染 + 行交互
-      const tb = $('#issue_tbody'); tb.innerHTML='';
-      if(res.issues.length===0){
-        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0%</td></tr>';
-      } else {
-        res.issues.forEach(({type,count},i)=>{
-          const pct = res.issueBase? ((count/res.issueBase*100).toFixed(2)+'%'):'-';
-          const tr = document.createElement('tr');
-          tr.dataset.idx = i;
-          tr.innerHTML = `<td>${escapeHtml(type)}</td><td>${count}</td><td>${pct}</td>`;
-          tr.addEventListener('mouseenter',()=>setActive(i));
-          tr.addEventListener('mouseleave',()=>setActive(-1));
-          tb.appendChild(tr);
-        });
-      }
-
-      // 甜甜圈渲染 + 悬浮交互
-      drawDonutSVG(res.issues.map(x=>x.count), res.issues.map(x=>x.type), res.issueBase);
+      applyMetrics(res.summary);
 
       // 审计标签
       const tg = $('#tags');
@@ -232,9 +636,622 @@
       pushTag('状态列', res.statusCol||'未识别');
       pushTag('问题件类型列', res.prob1Col||'未识别');
       pushTag('异常件类型列', res.prob2Col||'未识别');
+      pushTag('第一次问题登记时间列', res.prob1TimeCol||'未识别');
+      pushTag('第二次问题登记时间列', res.prob2TimeCol||'未识别');
+      pushTag('目的国航班到达列', res.arrivalCol||'未识别');
+      pushTag('清关完成列', res.clearCol||'未识别');
 
-      $('#btn_export').onclick = () => exportWorkbook(res);
+      $('#btn_export').onclick = () => {
+        if(STATE.currentMetrics){
+          exportWorkbook(STATE.currentMetrics, STATE.currentLabel);
+        }
+      };
+
+      renderTrendForKey('all');
     }
+
+    function buildBatchBar(res){
+      const bar = $('#batch_bar');
+      bar.innerHTML = '';
+      const entries = [];
+      entries.push({key:'all', label:'全部', metrics:res.summary, size:res.summary.total});
+      res.batches.forEach(b=>{
+        entries.push({key:b.key, label:b.label, metrics:b.metrics, size:b.size});
+        STATE.batchMap.set(b.key, {label:b.label, metrics:b.metrics});
+      });
+      if(res.ungrouped){
+        entries.push({key:res.ungrouped.key, label:res.ungrouped.label, metrics:res.ungrouped.metrics, size:res.ungrouped.size});
+        STATE.batchMap.set(res.ungrouped.key, {label:res.ungrouped.label, metrics:res.ungrouped.metrics});
+      }
+
+      const hasBatch = entries.length > 1;
+      if(!hasBatch){
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+
+      entries.forEach(entry=>{
+        const btn = document.createElement('button');
+        btn.className = 'batch-btn' + (entry.key===STATE.currentKey?' active':'');
+        btn.dataset.key = entry.key;
+        btn.textContent = entry.size != null ? `${entry.label}（${entry.size}）` : entry.label;
+        btn.addEventListener('click', ()=>{
+          setActiveBatch(entry.key);
+        });
+        bar.appendChild(btn);
+      });
+    }
+
+    function setActiveBatch(key){
+      if(key===STATE.currentKey) return;
+      const info = key==='all' ? {label:'全部', metrics:STATE.res.summary} : STATE.batchMap.get(key);
+      if(!info){
+        return;
+      }
+      STATE.currentKey = key;
+      STATE.currentLabel = info.label;
+      STATE.currentMetrics = info.metrics;
+      applyMetrics(info.metrics);
+      renderTrendForKey(key);
+      $$('#batch_bar .batch-btn').forEach(btn=>{
+        btn.classList.toggle('active', btn.dataset.key === key);
+      });
+    }
+
+    function buildTransferDetail(transfer){
+      if(!transfer) return '';
+      const lines = [];
+      const missing = transfer.missingClearCount ?? transfer.arrivalCount ?? 0;
+      const over5 = transfer.over5 ?? 0;
+      lines.push(`共有 ${over5} 票超出5天卡转时效，其中 ${missing} 票缺少清关时间`);
+      const hasEarliestSpan = transfer.ms != null && transfer.earliestArrival && transfer.earliestClear;
+      const earliestSpan = hasEarliestSpan ? formatDuration(transfer.ms).text : '从目的国航班到达 → 清关完成的最早时间之间的时间跨度';
+      lines.push(`已完成最早跨度：[ ${earliestSpan} ]`);
+      const earliestSegment = transfer.earliestArrival && transfer.earliestClear
+        ? `${formatDate(transfer.earliestArrival)} → ${formatDate(transfer.earliestClear)}`
+        : '从目的国航班到达 → 清关完成的最早时间';
+      lines.push(`最早段：[ ${earliestSegment} ]`);
+      const hasLatestSpan = transfer.latestMs != null && transfer.latestArrival && transfer.latestClear;
+      const latestSpan = hasLatestSpan ? formatDuration(transfer.latestMs).text : '从目的国航班到达 → 清关完成的最晚时间之间的时间跨度';
+      lines.push(`已完成最晚跨度：[ ${latestSpan} ]`);
+      const latestSegment = transfer.latestArrival && transfer.latestClear
+        ? `${formatDate(transfer.latestArrival)} → ${formatDate(transfer.latestClear)}`
+        : '目的国航班到达 → 清关完成的最晚时间';
+      lines.push(`最晚段：[ ${latestSegment} ]`);
+      return lines.join('<br>');
+    }
+
+    function applyMetrics(metrics){
+      if(!metrics) return;
+
+      $('#k_total').textContent = metrics.total;
+      $('#k_signed').textContent = metrics.signed;
+      $('#k_problem').textContent = metrics.problem;
+      $('#k_normal').textContent = metrics.normal;
+      $('#k_signed_rate').textContent = formatPercent(metrics.signedRate);
+      const problemDetail = $('#k_problem_detail');
+      if(problemDetail){
+        if(metrics.problemSecondUnsigned != null){
+          problemDetail.textContent = metrics.problemSecondUnsigned > 0
+            ? `目前还有 ${metrics.problemSecondUnsigned} 问题件被二次标记且未签收`
+            : '';
+        } else {
+          problemDetail.textContent = '暂无数据';
+        }
+      }
+      const problemRateEl = $('#k_problem_rate');
+      if(problemRateEl){
+        if(metrics.problemRateValue != null){
+          problemRateEl.textContent = formatPercent(metrics.problemRateValue);
+          problemRateEl.title = `未签收问题件：${metrics.problemUnsigned || 0} / 总票数：${metrics.total || 0}`;
+        } else {
+          problemRateEl.textContent = '-';
+          problemRateEl.title = '';
+        }
+      }
+
+      const cardTransfer = $('#card_transfer');
+      const numTransfer = $('#k_transfer');
+      const detailTransfer = $('#k_transfer_detail');
+      cardTransfer.classList.remove('danger');
+      numTransfer.textContent = '-';
+      detailTransfer.textContent = '-';
+      cardTransfer.title = '';
+      const transfer = metrics.transfer;
+      if(transfer && transfer.status && transfer.status !== 'no_data'){
+        if(transfer.status === 'in_transit'){
+          cardTransfer.classList.add('danger');
+          numTransfer.textContent = '卡转运输中';
+          const extraDetail = buildTransferDetail(transfer);
+          if(transfer.earliestArrival && transfer.ms != null && transfer.now){
+            const {text} = formatDuration(transfer.ms);
+            const realtime = `实时跨度：${text}<br>从 ${formatDate(transfer.earliestArrival)} 至 ${formatDate(transfer.now)}`;
+            detailTransfer.innerHTML = extraDetail ? `${realtime}<br>${extraDetail}` : realtime;
+          } else {
+            detailTransfer.innerHTML = extraDetail || '缺少时间数据';
+          }
+          cardTransfer.title = `全部 ${transfer.arrivalCount || 0} 票清关完成时间缺失`;
+        } else if(transfer.status === 'partial_missing'){
+          cardTransfer.classList.add('danger');
+          numTransfer.textContent = '-';
+          const detailHtml = buildTransferDetail(transfer);
+          detailTransfer.innerHTML = detailHtml;
+          const sample = transfer.sample || 0;
+          const over5 = transfer.over5 || 0;
+          const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
+          cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
+        } else {
+          const {text, daysDecimal, daysFormatted} = formatDuration(transfer.ms);
+          numTransfer.textContent = daysFormatted != null ? `${daysFormatted} 天` : '-';
+          const detailHtml = buildTransferDetail(transfer);
+          detailTransfer.innerHTML = detailHtml || '缺少时间数据';
+          if(daysDecimal != null && daysDecimal > 5){
+            cardTransfer.classList.add('danger');
+          }
+          const sample = transfer.sample;
+          const over5 = transfer.over5;
+          const pct = sample ? (over5 * 100 / sample).toFixed(1) : '0.0';
+          cardTransfer.title = `样本量：${sample}；>5 天：${over5}（${pct}%）`;
+        }
+      } else {
+        numTransfer.textContent = '-';
+        const hasCols = STATE.res && STATE.res.arrivalCol && STATE.res.clearCol;
+        detailTransfer.textContent = hasCols ? '暂无可用的最早时间' : '缺少相关列';
+        cardTransfer.title = '样本量：0；>5 天：0（0.0%）';
+      }
+
+      const tb = $('#issue_tbody'); tb.innerHTML='';
+      if(!metrics.issues || metrics.issues.length===0){
+        tb.innerHTML = '<tr><td class="muted">无问题标记（或未识别问题列）</td><td>0</td><td>0</td><td>0%</td><td>-</td></tr>';
+      } else {
+        metrics.issues.forEach(({type,firstCount,secondCount,totalCount,entries},i)=>{
+          const pct = metrics.issueBase? ((totalCount/metrics.issueBase*100).toFixed(2)+'%'):'-';
+          const tr = document.createElement('tr');
+          tr.dataset.idx = i;
+          const tdType = document.createElement('td');
+          tdType.textContent = type;
+          const tdFirst = document.createElement('td');
+          tdFirst.textContent = firstCount;
+          const tdSecond = document.createElement('td');
+          tdSecond.textContent = secondCount;
+          const tdPct = document.createElement('td');
+          tdPct.textContent = pct;
+          const tdAction = document.createElement('td');
+          if(entries && entries.length){
+            const btn = document.createElement('button');
+            btn.className = 'btn small';
+            btn.textContent = '导出';
+            btn.addEventListener('click', e=>{
+              e.stopPropagation();
+              exportIssueEntries(type, entries);
+            });
+            tdAction.appendChild(btn);
+          } else {
+            tdAction.textContent = '-';
+          }
+          tr.appendChild(tdType);
+          tr.appendChild(tdFirst);
+          tr.appendChild(tdSecond);
+          tr.appendChild(tdPct);
+          tr.appendChild(tdAction);
+          tr.addEventListener('mouseenter',()=>setActive(i));
+          tr.addEventListener('mouseleave',()=>setActive(-1));
+          tb.appendChild(tr);
+        });
+      }
+
+      drawDonutSVG(metrics.issues);
+    }
+
+    function renderTrendForKey(key){
+      const card = $('#trend_card');
+      if(!card) return;
+      const canvas = $('#trend_canvas');
+      const legend = $('#trend_legend');
+      const subtitle = $('#trend_subtitle');
+      const empty = $('#trend_empty');
+      if(!canvas || !legend || !subtitle || !empty){
+        return;
+      }
+      if(!STATE.res){
+        card.style.display = 'none';
+        STATE.trendCache = null;
+        hideTrendTooltip();
+        return;
+      }
+      card.style.display = 'block';
+      hideTrendTooltip();
+
+      if(key === 'all'){
+        const points = STATE.trendAll || [];
+        if(!points.length){
+          canvas.style.display = 'none';
+          empty.style.display = 'block';
+          empty.textContent = STATE.res.arrivalCol
+            ? '缺少可按批次区分的记录，无法生成整体趋势。'
+            : '缺少“目的国航班到达”列，无法生成批次趋势。';
+          legend.innerHTML = '';
+          subtitle.textContent = '全部批次 · 无法绘制趋势';
+          STATE.trendCache = null;
+          return;
+        }
+        canvas.style.display = 'block';
+        empty.style.display = 'none';
+        subtitle.textContent = '全部批次 · 按批次时间对比签收率与未签收问题件率';
+        legend.innerHTML = `
+          <span class="legend-item"><span class="legend-dot" style="background:${getCssVar('--accent')}"></span>签收率</span>
+          <span class="legend-item"><span class="legend-dot" style="background:${getCssVar('--accent2')}"></span>未签收问题件率</span>
+        `;
+        drawAllTrend(points);
+        return;
+      }
+
+      const target = STATE.batchMap.get(key);
+      if(!target){
+        canvas.style.display = 'none';
+        empty.style.display = 'block';
+        empty.textContent = '未找到该批次的指标数据。';
+        legend.innerHTML = '';
+        subtitle.textContent = '批次趋势';
+        STATE.trendCache = null;
+        return;
+      }
+
+      subtitle.textContent = `${target.label} · 按签收日期展示每日签收量`;
+      if(!STATE.signedTimeCol){
+        canvas.style.display = 'none';
+        empty.style.display = 'block';
+        empty.textContent = '缺少签收时间列，无法绘制日度趋势。';
+        legend.innerHTML = '';
+        STATE.trendCache = null;
+        return;
+      }
+      const daily = target.metrics?.dailySigned || [];
+      if(!daily.length){
+        canvas.style.display = 'none';
+        empty.style.display = 'block';
+        empty.textContent = '该批次尚无可用的签收日期数据。';
+        legend.innerHTML = '';
+        STATE.trendCache = null;
+        return;
+      }
+      canvas.style.display = 'block';
+      empty.style.display = 'none';
+      legend.innerHTML = `<span class="legend-item"><span class="legend-dot" style="background:${getCssVar('--accent')}"></span>每日签收票数</span>`;
+      drawDailyTrend(daily);
+    }
+
+    function drawAllTrend(points){
+      const canvas = $('#trend_canvas');
+      const prepared = prepareTrendCanvas(canvas);
+      if(!prepared) return;
+      const {ctx, width, height} = prepared;
+      const padding = {left:70, right:16, top:28, bottom:66};
+      const chartW = Math.max(1, width - padding.left - padding.right);
+      const chartH = Math.max(1, height - padding.top - padding.bottom);
+      const step = points.length > 1 ? chartW / (points.length - 1) : 0;
+      const colorSigned = getCssVar('--accent') || '#22d3ee';
+      const colorProblem = getCssVar('--accent2') || '#a78bfa';
+      const basePoints = points.map((item, idx)=>{
+        const signedPct = item.signedRate != null ? item.signedRate * 100 : null;
+        const problemPct = item.problemRate != null ? item.problemRate * 100 : null;
+        const x = padding.left + (points.length > 1 ? step * idx : chartW / 2);
+        const signedY = signedPct != null
+          ? padding.top + chartH - (Math.min(100, Math.max(0, signedPct)) / 100) * chartH
+          : null;
+        const problemY = problemPct != null
+          ? padding.top + chartH - (Math.min(100, Math.max(0, problemPct)) / 100) * chartH
+          : null;
+        return {
+          key: item.key,
+          label: item.label || '',
+          x,
+          signedPct,
+          problemPct,
+          problemUnsigned: item.problemUnsigned ?? null,
+          total: item.total ?? null,
+          signedY,
+          problemY
+        };
+      });
+      drawPercentageGrid(ctx, width, height, padding);
+      const signedSeries = basePoints.map(pt=>({x:pt.x, y:pt.signedY, value:pt.signedPct}));
+      const problemSeries = basePoints.map(pt=>({x:pt.x, y:pt.problemY, value:pt.problemPct}));
+      drawSeries(ctx, signedSeries, colorSigned);
+      drawSeries(ctx, problemSeries, colorProblem);
+      drawXAxisLabels(ctx, basePoints, padding, chartH, pt=>pt.label);
+      STATE.trendCache = {mode:'all', basePoints};
+    }
+
+    function drawDailyTrend(daily){
+      const canvas = $('#trend_canvas');
+      const prepared = prepareTrendCanvas(canvas);
+      if(!prepared) return;
+      const {ctx, width, height} = prepared;
+      const padding = {left:70, right:20, top:28, bottom:66};
+      const chartW = Math.max(1, width - padding.left - padding.right);
+      const chartH = Math.max(1, height - padding.top - padding.bottom);
+      const step = daily.length > 1 ? chartW / (daily.length - 1) : 0;
+      const colorSigned = getCssVar('--accent') || '#22d3ee';
+      const maxCount = daily.reduce((acc, cur)=> Math.max(acc, cur.count || 0), 0);
+      const yMax = Math.max(1, niceMaxValue(maxCount));
+      const weekMap = ['日','一','二','三','四','五','六'];
+      const basePoints = daily.map((item, idx)=>{
+        const value = Number(item.count) || 0;
+        const x = padding.left + (daily.length > 1 ? step * idx : chartW / 2);
+        const ratio = value / yMax;
+        const y = padding.top + chartH - Math.min(1, Math.max(0, ratio)) * chartH;
+        const dt = item.date ? new Date(item.date) : null;
+        const validDate = dt && !Number.isNaN(dt.getTime());
+        const weekLabel = validDate ? `周${weekMap[dt.getDay()]}` : '';
+        const displayLabel = validDate
+          ? `${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}(${weekLabel})`
+          : item.date;
+        return {
+          key: item.date,
+          label: item.date || '',
+          x,
+          y,
+          value,
+          displayLabel,
+          weekLabel
+        };
+      });
+      drawValueGrid(ctx, width, height, padding, yMax);
+      const series = basePoints.map(pt=>({x:pt.x, y:pt.y, value:pt.value}));
+      drawSeries(ctx, series, colorSigned);
+      drawXAxisLabels(ctx, basePoints, padding, chartH, pt=>pt.displayLabel);
+      STATE.trendCache = {mode:'daily', basePoints, yMax};
+    }
+
+    function prepareTrendCanvas(canvas){
+      if(!canvas) return null;
+      const ratio = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(320, rect.width || canvas.width || 640);
+      const height = Math.max(200, rect.height || canvas.height || 280);
+      canvas.width = width * ratio;
+      canvas.height = height * ratio;
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.font = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
+      return {ctx, width, height};
+    }
+
+    function drawPercentageGrid(ctx, width, height, padding){
+      const chartW = width - padding.left - padding.right;
+      const chartH = height - padding.top - padding.bottom;
+      const ticks = [0,20,40,60,80,100];
+      ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+      ctx.lineWidth = 1;
+      ticks.forEach(pct=>{
+        const y = padding.top + chartH - (pct/100) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+      });
+      ctx.strokeStyle = '#1f2b3e';
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, padding.top + chartH);
+      ctx.lineTo(width - padding.right, padding.top + chartH);
+      ctx.stroke();
+      ctx.fillStyle = '#8da2bf';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ticks.forEach(pct=>{
+        const y = padding.top + chartH - (pct/100) * chartH;
+        ctx.fillText(`${pct}%`, padding.left - 12, y);
+      });
+    }
+
+    function drawValueGrid(ctx, width, height, padding, maxValue){
+      const chartW = width - padding.left - padding.right;
+      const chartH = height - padding.top - padding.bottom;
+      const steps = 5;
+      const tickValues = [];
+      for(let i=0;i<=steps;i++){
+        tickValues.push(Math.round(maxValue * i / steps));
+      }
+      ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+      ctx.lineWidth = 1;
+      tickValues.forEach(val=>{
+        const ratio = maxValue ? val / maxValue : 0;
+        const y = padding.top + chartH - Math.min(1, Math.max(0, ratio)) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+      });
+      ctx.strokeStyle = '#1f2b3e';
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, padding.top + chartH);
+      ctx.lineTo(width - padding.right, padding.top + chartH);
+      ctx.stroke();
+      ctx.fillStyle = '#8da2bf';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      tickValues.forEach(val=>{
+        const ratio = maxValue ? val / maxValue : 0;
+        const y = padding.top + chartH - Math.min(1, Math.max(0, ratio)) * chartH;
+        ctx.fillText(String(val), padding.left - 12, y);
+      });
+    }
+
+    function drawSeries(ctx, series, color){
+      const segments = [];
+      let current = [];
+      series.forEach(pt=>{
+        if(pt.y == null || Number.isNaN(pt.y)){
+          if(current.length){
+            segments.push(current);
+            current = [];
+          }
+          return;
+        }
+        current.push(pt);
+      });
+      if(current.length) segments.push(current);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      segments.forEach(seg=>{
+        if(!seg.length) return;
+        ctx.beginPath();
+        ctx.moveTo(seg[0].x, seg[0].y);
+        for(let i=1;i<seg.length;i++){
+          ctx.lineTo(seg[i].x, seg[i].y);
+        }
+        ctx.stroke();
+      });
+      ctx.fillStyle = color;
+      series.forEach(pt=>{
+        if(pt.y == null || Number.isNaN(pt.y)) return;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI*2);
+        ctx.fill();
+      });
+    }
+
+    function drawXAxisLabels(ctx, basePoints, padding, chartH, labelSelector){
+      const count = basePoints.length;
+      if(!count) return;
+      const step = count > 12 ? Math.ceil(count / 12) : 1;
+      const bottom = padding.top + chartH;
+      basePoints.forEach((pt, idx)=>{
+        if(count > 1 && idx % step !== 0 && idx !== count - 1) return;
+        const label = labelSelector(pt, idx);
+        if(!label) return;
+        ctx.save();
+        ctx.translate(pt.x, bottom + 6);
+        ctx.rotate(-Math.PI / 4);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(label, 0, 0);
+        ctx.restore();
+      });
+    }
+
+    function niceMaxValue(value){
+      if(!value || value <= 0) return 1;
+      const exp = Math.floor(Math.log10(value));
+      const base = Math.pow(10, exp);
+      const scaled = value / base;
+      let nice;
+      if(scaled <= 1) nice = 1;
+      else if(scaled <= 2) nice = 2;
+      else if(scaled <= 5) nice = 5;
+      else nice = 10;
+      return nice * base;
+    }
+
+    function hideTrendTooltip(){
+      const tt = $('#trend_tooltip');
+      if(tt){
+        tt.classList.remove('show');
+      }
+    }
+
+    function showTrendTooltip(html, x, y){
+      const tt = $('#trend_tooltip');
+      if(!tt) return;
+      tt.innerHTML = html;
+      tt.style.left = `${x}px`;
+      tt.style.top = `${y}px`;
+      tt.classList.add('show');
+      const wrap = tt.parentElement;
+      if(wrap){
+        const wrapWidth = wrap.clientWidth;
+        const wrapHeight = wrap.clientHeight;
+        const width = tt.offsetWidth;
+        const height = tt.offsetHeight;
+        const clampedX = Math.max(8, Math.min(x, wrapWidth - width - 8));
+        const clampedY = Math.max(8, Math.min(y, wrapHeight - height - 8));
+        tt.style.left = `${clampedX}px`;
+        tt.style.top = `${clampedY}px`;
+      }
+    }
+
+    function buildTrendTooltip(mode, point){
+      if(mode === 'all'){
+        const colorSigned = getCssVar('--accent') || '#22d3ee';
+        const colorProblem = getCssVar('--accent2') || '#a78bfa';
+        const signedText = point.signedPct != null ? `${point.signedPct.toFixed(2)}%` : '缺少签收率';
+        const problemText = point.problemPct != null ? `${point.problemPct.toFixed(2)}%` : '缺少问题件率';
+        const detail = (point.problemUnsigned != null && point.total != null)
+          ? `<div>未签收问题件：${point.problemUnsigned} / 总票数：${point.total}</div>`
+          : '';
+        return `<div><b>${escapeHtml(point.label)}</b></div>` +
+          `<div style="color:${colorSigned}">签收率：${signedText}</div>` +
+          `<div style="color:${colorProblem}">未签收问题件率：${problemText}</div>` +
+          detail;
+      }
+      const colorSigned = getCssVar('--accent') || '#22d3ee';
+      const week = point.weekLabel ? ` · ${point.weekLabel}` : '';
+      return `<div><b>${escapeHtml(point.label)}</b>${escapeHtml(week)}</div>` +
+        `<div style="color:${colorSigned}">签收票数：${point.value}</div>`;
+    }
+
+    function handleTrendHover(evt){
+      if(!STATE.trendCache || !STATE.trendCache.basePoints || !STATE.trendCache.basePoints.length){
+        hideTrendTooltip();
+        return;
+      }
+      const canvas = evt.currentTarget;
+      const canvasRect = canvas.getBoundingClientRect();
+      const wrapRect = canvas.parentElement.getBoundingClientRect();
+      const x = evt.clientX - canvasRect.left;
+      const y = evt.clientY - canvasRect.top;
+      let nearest = null;
+      STATE.trendCache.basePoints.forEach(pt=>{
+        if(STATE.trendCache.mode === 'all'){
+          if(pt.signedY != null){
+            const dist = Math.hypot(pt.x - x, pt.signedY - y);
+            if(!nearest || dist < nearest.dist){
+              nearest = {dist, point:pt, anchorX:pt.x, anchorY:pt.signedY};
+            }
+          }
+          if(pt.problemY != null){
+            const dist = Math.hypot(pt.x - x, pt.problemY - y);
+            if(!nearest || dist < nearest.dist){
+              nearest = {dist, point:pt, anchorX:pt.x, anchorY:pt.problemY};
+            }
+          }
+        } else if(STATE.trendCache.mode === 'daily'){
+          if(pt.y != null){
+            const dist = Math.hypot(pt.x - x, pt.y - y);
+            if(!nearest || dist < nearest.dist){
+              nearest = {dist, point:pt, anchorX:pt.x, anchorY:pt.y};
+            }
+          }
+        }
+      });
+      if(!nearest || nearest.dist > 28){
+        hideTrendTooltip();
+        return;
+      }
+      const offsetX = canvasRect.left - wrapRect.left + nearest.anchorX + 12;
+      const offsetY = canvasRect.top - wrapRect.top + nearest.anchorY - 12;
+      showTrendTooltip(buildTrendTooltip(STATE.trendCache.mode, nearest.point), offsetX, offsetY);
+    }
+
+    const trendCanvasEl = document.getElementById('trend_canvas');
+    if(trendCanvasEl){
+      trendCanvasEl.addEventListener('mousemove', handleTrendHover);
+      trendCanvasEl.addEventListener('mouseleave', ()=> hideTrendTooltip());
+    }
+
+    window.addEventListener('resize', ()=>{
+      if(STATE.res){
+        renderTrendForKey(STATE.currentKey);
+      }
+    });
 
     // —— 可交互甜甜圈（SVG） ——
     const palette = ['#22d3ee','#a78bfa','#22c55e','#f59e0b','#ef4444','#38bdf8','#f472b6','#84cc16','#eab308','#f97316'];
@@ -246,17 +1263,19 @@
       const large = (a1-a0) > 180 ? 1 : 0;
       return `M ${x0} ${y0} A ${r1} ${r1} 0 ${large} 1 ${x1} ${y1} L ${x2} ${y2} A ${r2} ${r2} 0 ${large} 0 ${x3} ${y3} Z`;
     }
-    function drawDonutSVG(series, labels, base){
+    function drawDonutSVG(issues){
       const svg = $('#donut_svg'); svg.innerHTML=''; SEGMENTS = [];
-      const cx=110, cy=110, rOuter=100, rInner=62; let acc=0; const sum=series.reduce((a,b)=>a+b,0);
-      if(sum<=0){
+      const cx=110, cy=110, rOuter=100, rInner=62; let acc=0;
+      const series = issues.map(item=>item.totalCount);
+      const base = series.reduce((a,b)=>a+b,0);
+      if(base<=0){
         // 空态画环
         const ring = document.createElementNS('http://www.w3.org/2000/svg','circle');
         ring.setAttribute('cx',cx); ring.setAttribute('cy',cy); ring.setAttribute('r',rOuter);
         ring.setAttribute('fill','#334155'); svg.appendChild(ring);
       } else {
         series.forEach((v,i)=>{
-          const a0=acc/sum*360, a1=(acc+v)/sum*360; acc+=v;
+          const a0=acc/base*360, a1=(acc+v)/base*360; acc+=v;
           const path = document.createElementNS('http://www.w3.org/2000/svg','path');
           path.setAttribute('d', arcPath(cx,cy,rOuter,rInner,a0,a1));
           path.setAttribute('fill', palette[i%palette.length]);
@@ -287,7 +1306,14 @@
       text2.setAttribute('font-size','12'); text2.textContent='样本'; svg.appendChild(text2);
 
       // 保存标签和占比到节点上用于 tooltip
-      SEGMENTS.forEach((p,i)=>{ p.dataset.label = labels[i]||''; p.dataset.count = series[i]; p.dataset.base = base||0; });
+      SEGMENTS.forEach((p,i)=>{
+        const issue = issues[i] || {};
+        p.dataset.label = issue.type || '';
+        p.dataset.count = series[i] || 0;
+        p.dataset.base = base || 0;
+        p.dataset.first = issue.firstCount || 0;
+        p.dataset.second = issue.secondCount || 0;
+      });
     }
 
     function setActive(i, evt){
@@ -307,7 +1333,9 @@
       if(i>=0 && SEGMENTS[i]){
         const n=SEGMENTS[i];
         const b=Number(n.dataset.base)||0, c=Number(n.dataset.count)||0, pct = b? (c*100/b).toFixed(2)+'%' : '0%';
-        tt.innerHTML = `<b>${escapeHtml(n.dataset.label||'')}</b> · ${c} / ${pct}`;
+        const first = Number(n.dataset.first)||0;
+        const second = Number(n.dataset.second)||0;
+        tt.innerHTML = `<b>${escapeHtml(n.dataset.label||'')}</b> · 总计 ${c} / ${pct}<br>第一次：${first} 第二次：${second}`;
         tt.classList.add('show');
         if(evt && evt.clientX){ // 放在鼠标附近
           const rect = tt.parentElement.getBoundingClientRect();
@@ -322,26 +1350,58 @@
     function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"'"}[c])); }
 
     // —— 导出 Excel（本地打包） ——
-    function exportWorkbook(res){
+    function sanitizeSheetName(name){
+      const clean = String(name||'').replace(/[\[\]\:*?/\\]/g,' ').trim();
+      return clean ? clean.slice(0,31) : 'Sheet1';
+    }
+
+    function sanitizeFileName(name){
+      const clean = String(name||'').replace(/[\\/:*?"<>|]/g,' ').trim();
+      return clean || '未标注';
+    }
+
+    function exportIssueEntries(type, entries){
+      if(!entries || !entries.length){
+        alert('该问题类型没有可导出的快递单号');
+        return;
+      }
+      const data = [["问题类型","快递单号","第一次登记问题件时间","第二次登记问题件时间"]];
+      entries.forEach(entry=>{
+        data.push([
+          type || '未标注',
+          entry.id || '（缺少单号）',
+          entry.firstTime || '',
+          entry.secondTime || ''
+        ]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(data);
       const wb = XLSX.utils.book_new();
-      const sumData = [
-        ["指标","数量"],
-        ["总票数（仅统计有快递单号）", res.total],
-        ["已签收", res.signed],
-        ["问题件（派送/网点到件）", res.problem],
-        ["正常派送中（无问题标记）", res.normal]
-      ];
-      const wsSum = XLSX.utils.aoa_to_sheet(sumData);
-      XLSX.utils.book_append_sheet(wb, wsSum, '总览');
+      XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(type));
+      const safe = sanitizeFileName(type);
+      XLSX.writeFile(wb, `问题类型_${safe}_${ts()}.xlsx`);
+    }
 
-      // 问题占比
-      const issueData = [["问题类型","数量","占比(%)"]];
-      const base = res.issueBase || 0;
-      res.issues.forEach(x=> issueData.push([x.type, x.count, base? +(x.count*100/base).toFixed(2): 0]));
-      const wsIssue = XLSX.utils.aoa_to_sheet(issueData);
-      XLSX.utils.book_append_sheet(wb, wsIssue, '问题类型占比');
+    function exportWorkbook(metrics, label){
+      const wb = XLSX.utils.book_new();
+      const detailData = [["问题类型","快递单号","第一次登记问题件时间","第二次登记问题件时间"]];
+      metrics.issues.forEach(item=>{
+        item.entries.forEach(entry=>{
+          detailData.push([
+            item.type,
+            entry.id || '（缺少单号）',
+            entry.firstTime || '',
+            entry.secondTime || ''
+          ]);
+        });
+      });
+      if(detailData.length === 1){
+        detailData.push(["-","-","-","-"]);
+      }
+      const wsDetail = XLSX.utils.aoa_to_sheet(detailData);
+      XLSX.utils.book_append_sheet(wb, wsDetail, '问题件明细');
 
-      XLSX.writeFile(wb, `阿尔巴尼亚派件日报_汇总_${ts()}.xlsx`);
+      const suffix = label && label !== '全部' ? `_${sanitizeFileName(label)}` : '';
+      XLSX.writeFile(wb, `导出汇总${suffix || ''}.xlsx`);
     }
 
     function ts(){
